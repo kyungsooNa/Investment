@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -69,6 +70,13 @@ class BacktestMicrostructureCaptureService:
             start_hhmmss=start_hhmmss,
             end_hhmmss=end_hhmmss,
         )
+        program_trades_intraday = self._capture_program_trades_intraday(
+            selected_codes,
+            date_ymd=date_ymd,
+            source=program_source,
+            start_hhmmss=start_hhmmss,
+            end_hhmmss=end_hhmmss,
+        )
         orderbook_intraday, orderbook_fallback_codes = self._capture_orderbook_intraday(
             selected_codes,
             date_ymd=date_ymd,
@@ -88,7 +96,7 @@ class BacktestMicrostructureCaptureService:
         )
 
         metadata: dict[str, Any] = {
-                "schema_version": 1,
+                "schema_version": 2,
                 "capture_type": "backtest_microstructure_overlay",
                 "trade_date": date_ymd,
                 "codes": selected_codes,
@@ -119,6 +127,9 @@ class BacktestMicrostructureCaptureService:
                         1 for value in program_trades.values()
                         if value is not None
                     ),
+                    "program_trades_intraday_rows": sum(
+                        len(rows) for rows in program_trades_intraday.values()
+                    ),
                     "orderbook_intraday_rows": sum(
                         len(rows) for rows in orderbook_intraday.values()
                     ),
@@ -132,6 +143,7 @@ class BacktestMicrostructureCaptureService:
             "execution_strength": execution_strength,
             "execution_strength_intraday": execution_strength_intraday,
             "program_trades": program_trades,
+            "program_trades_intraday": program_trades_intraday,
             "orderbook_intraday": orderbook_intraday,
         }
 
@@ -324,6 +336,7 @@ class BacktestMicrostructureCaptureService:
         if source == "program_db":
             result = self._capture_program_trades_from_db(
                 codes,
+                date_ymd=date_ymd,
                 start_hhmmss=start_hhmmss,
                 end_hhmmss=end_hhmmss,
             )
@@ -368,6 +381,7 @@ class BacktestMicrostructureCaptureService:
         self,
         codes: list[str],
         *,
+        date_ymd: str,
         start_hhmmss: str,
         end_hhmmss: str,
     ) -> dict[str, dict | None]:
@@ -375,6 +389,7 @@ class BacktestMicrostructureCaptureService:
         if not self._program_db_path.exists():
             return result
 
+        start_epoch, end_epoch = _local_date_epoch_bounds(date_ymd)
         with sqlite3.connect(self._program_db_path) as conn:
             for code in codes:
                 row = conn.execute(
@@ -382,17 +397,55 @@ class BacktestMicrostructureCaptureService:
                     SELECT net_vol
                     FROM pt_history
                     WHERE code = ?
+                      AND created_at >= ?
+                      AND created_at < ?
                       AND COALESCE(trade_time, '') >= ?
                       AND COALESCE(trade_time, '') <= ?
                     ORDER BY id DESC
                     LIMIT 1
                     """,
-                    (code, start_hhmmss, end_hhmmss),
+                    (code, start_epoch, end_epoch, start_hhmmss, end_hhmmss),
                 ).fetchone()
                 if row is None:
                     continue
                 qty = _to_int(row[0])
                 result[code] = {"program_net_buy_qty": qty} if qty is not None else None
+        return result
+
+    def _capture_program_trades_intraday(
+        self,
+        codes: list[str],
+        *,
+        date_ymd: str,
+        source: str,
+        start_hhmmss: str,
+        end_hhmmss: str,
+    ) -> dict[str, list[dict]]:
+        result: dict[str, list[dict]] = {code: [] for code in codes}
+        if source != "program_db" or not self._program_db_path.exists():
+            return result
+
+        start_epoch, end_epoch = _local_date_epoch_bounds(date_ymd)
+        with sqlite3.connect(self._program_db_path) as conn:
+            for code in codes:
+                rows = conn.execute(
+                    """
+                    SELECT trade_time, net_vol
+                    FROM pt_history
+                    WHERE code = ?
+                      AND created_at >= ?
+                      AND created_at < ?
+                      AND COALESCE(trade_time, '') >= ?
+                      AND COALESCE(trade_time, '') <= ?
+                    ORDER BY trade_time ASC, id ASC
+                    """,
+                    (code, start_epoch, end_epoch, start_hhmmss, end_hhmmss),
+                ).fetchall()
+                result[code] = [
+                    {"time": row[0], "program_net_buy_qty": _to_int(row[1])}
+                    for row in rows
+                    if _to_int(row[1]) is not None
+                ]
         return result
 
     @staticmethod
@@ -410,6 +463,9 @@ class BacktestMicrostructureCaptureService:
             output_dir / f"replay_execution_strength_intraday_{trade_date}.json"
         )
         program_trades_path = output_dir / f"replay_program_trades_{trade_date}.json"
+        program_trades_intraday_path = (
+            output_dir / f"replay_program_trades_intraday_{trade_date}.json"
+        )
         intraday_path = output_dir / f"replay_intraday_minutes_{trade_date}.json"
         quality_path = output_dir / f"replay_quality_{trade_date}.json"
         orderbook_path = output_dir / f"replay_orderbook_intraday_{trade_date}.json"
@@ -421,6 +477,10 @@ class BacktestMicrostructureCaptureService:
             payload.get("execution_strength_intraday", {}),
         )
         _write_json(program_trades_path, _flatten_program_trades(payload.get("program_trades", {})))
+        _write_json(
+            program_trades_intraday_path,
+            payload.get("program_trades_intraday", {}),
+        )
         _write_json(intraday_path, payload.get("intraday_minutes", {}))
         _write_json(orderbook_path, payload.get("orderbook_intraday", {}))
 
@@ -433,12 +493,18 @@ class BacktestMicrostructureCaptureService:
             "execution_strength": execution_strength_path,
             "execution_strength_intraday": execution_strength_intraday_path,
             "program_trades": program_trades_path,
+            "program_trades_intraday": program_trades_intraday_path,
             "intraday_minutes": intraday_path,
             "orderbook_intraday": orderbook_path,
         }
         if isinstance(quality_gate, dict):
             paths["quality"] = quality_path
         return paths
+
+
+def _local_date_epoch_bounds(date_ymd: str) -> tuple[float, float]:
+    start = datetime.strptime(str(date_ymd), "%Y%m%d")
+    return start.timestamp(), (start + timedelta(days=1)).timestamp()
 
 
 def _extract_execution_strength(resp: Any) -> float | None:

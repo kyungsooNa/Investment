@@ -190,6 +190,9 @@ class MicrostructureCaptureTask(AfterMarketTask):
                 "intraday_coverage_pct": quality_summary["intraday_coverage_pct"],
                 "program_overlay_coverage_pct": quality_summary["program_overlay_coverage_pct"],
                 "program_db_coverage_pct": quality_summary["program_db_coverage_pct"],
+                "program_intraday_db_coverage_pct": quality_summary[
+                    "program_intraday_db_coverage_pct"
+                ],
                 "execution_strength_db_coverage_pct": quality_summary[
                     "execution_strength_db_coverage_pct"
                 ],
@@ -231,6 +234,9 @@ class MicrostructureCaptureTask(AfterMarketTask):
                 "execution_strength_coverage_pct": quality_summary["execution_strength_coverage_pct"],
                 "program_overlay_coverage_pct": quality_summary["program_overlay_coverage_pct"],
                 "program_db_coverage_pct": quality_summary["program_db_coverage_pct"],
+                "program_intraday_db_coverage_pct": quality_summary[
+                    "program_intraday_db_coverage_pct"
+                ],
                 "execution_strength_source": execution_strength_source,
                 "execution_strength_fallback_codes": execution_strength_fallback_codes,
                 "execution_strength_db_coverage_pct": quality_summary["execution_strength_db_coverage_pct"],
@@ -248,6 +254,7 @@ class MicrostructureCaptureTask(AfterMarketTask):
                     f"intraday={quality_summary['intraday_coverage_pct']:.1f}%, "
                     f"program={quality_summary['program_overlay_coverage_pct']:.1f}%, "
                     f"program_db={format_optional_pct(quality_summary['program_db_coverage_pct'])}, "
+                    f"program_intraday={format_optional_pct(quality_summary['program_intraday_db_coverage_pct'])}, "
                     f"orderbook_db={format_optional_pct(quality_summary['orderbook_db_coverage_pct'])})"
                 )
                 await self._emit_quality_gate_warning(latest_trading_date, quality_summary)
@@ -353,6 +360,7 @@ class MicrostructureCaptureTask(AfterMarketTask):
             f"intraday={quality_summary['intraday_coverage_pct']:.1f}%, "
             f"program={quality_summary['program_overlay_coverage_pct']:.1f}%, "
             f"program_db={format_optional_pct(quality_summary['program_db_coverage_pct'])}, "
+            f"program_intraday={format_optional_pct(quality_summary['program_intraday_db_coverage_pct'])}, "
             f"orderbook_db={format_optional_pct(quality_summary['orderbook_db_coverage_pct'])}, "
             f"empty_minutes={len(empty_minute_codes)}{empty_detail}, "
             f"stale_dropped={stale_minute_rows_dropped}{stale_detail}",
@@ -366,6 +374,9 @@ class MicrostructureCaptureTask(AfterMarketTask):
                 "execution_strength_coverage_pct": quality_summary["execution_strength_coverage_pct"],
                 "program_overlay_coverage_pct": quality_summary["program_overlay_coverage_pct"],
                 "program_db_coverage_pct": quality_summary["program_db_coverage_pct"],
+                "program_intraday_db_coverage_pct": quality_summary[
+                    "program_intraday_db_coverage_pct"
+                ],
                 "orderbook_db_coverage_pct": quality_summary["orderbook_db_coverage_pct"],
                 "orderbook_sparse_codes": quality_summary["orderbook_sparse_codes"],
                 "empty_minute_codes": empty_minute_codes,

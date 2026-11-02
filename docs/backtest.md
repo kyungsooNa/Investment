@@ -665,6 +665,8 @@ python -m scripts.run_validation_campaign --output-file data/validation_campaign
 
 캠페인 러너는 원본 캡처의 품질 게이트를 다시 계산하고, 통과한 날짜의 `metadata.candidate_sources.base`만 PIT 후보로 사용해 활성 전략 7개를 독립 실행한다. 결과에는 날짜별 PIT 후보 수를 담은 `candidate_observability`, 전략별 체결·거부·0거래 요약, 20/5/5 walk-forward 준비도가 포함된다. 유효일이 30개 미만이면 walk-forward는 실행하지 않고 `waiting_for_more_valid_dates`로 기록한다.
 
+`program_source=program_db` 캡처는 `program_trades_intraday` 시계열 커버리지가 50% 이상이어야 품질 게이트를 통과한다. replay는 평가 시각 이하의 최신 프로그램 순매수만 사용하며, 캡처 날짜에 시계열이 없더라도 현재 KIS API로 폴백하지 않는다. 장마감 최종값인 `program_trades`를 장중 신호에 사용하면 미래 정보가 되기 때문이다.
+
 PIT 후보 관측치가 하나 이상인데 BUY와 REJECTED가 모두 없으면 `zero_trade_reason=no_signal_observed`로 기록한다. 후보 관측치도 없으면 `no_signal_or_candidate_observed`를 유지한다. 어느 진입 필터가 신호를 막았는지까지 판정하려면 전략별 candidate funnel이 추가로 필요하다.
 
 ## 출력 해석

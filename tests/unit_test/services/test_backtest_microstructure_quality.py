@@ -37,6 +37,10 @@ def test_summarize_capture_quality_uses_metadata_codes_and_program_db_fallbacks(
             "035420": {"program_net_buy_qty": 0},
             "068270": None,
         },
+        "program_trades_intraday": {
+            "005930": [{"time": "100000", "program_net_buy_qty": 1}],
+            "000660": [{"time": "100000", "program_net_buy_qty": -1}],
+        },
     }
 
     summary = summarize_capture_quality(
@@ -51,12 +55,43 @@ def test_summarize_capture_quality_uses_metadata_codes_and_program_db_fallbacks(
     assert summary["program_overlay_coverage_pct"] == pytest.approx(75.0)
     assert summary["program_db_available"] == 2
     assert summary["program_db_coverage_pct"] == pytest.approx(50.0)
+    assert summary["program_intraday_db_coverage_pct"] == pytest.approx(50.0)
     assert summary["program_fallback_codes"] == ["035420"]
     assert summary["stale_minute_rows_dropped"] == 2
     assert summary["issues"] == [
         "intraday_coverage_below_threshold",
         "program_overlay_coverage_below_threshold",
     ]
+
+
+def test_quality_gate_requires_point_in_time_program_series_for_program_db_capture():
+    payload = {
+        "metadata": {
+            "trade_date": "20260512",
+            "codes": ["000001", "000002"],
+            "program_source": "program_db",
+            "program_fallback_codes": [],
+        },
+        "intraday_minutes": {"000001": [{}], "000002": [{}]},
+        "execution_strength": {"000001": 120.0, "000002": 121.0},
+        "program_trades": {
+            "000001": {"program_net_buy_qty": 10},
+            "000002": {"program_net_buy_qty": 20},
+        },
+        "program_trades_intraday": {
+            "000001": [{"time": "100000", "program_net_buy_qty": 10}],
+            "000002": [],
+        },
+    }
+
+    summary = summarize_capture_quality(payload)
+
+    assert summary["program_intraday_db_coverage_pct"] == pytest.approx(50.0)
+    assert "program_intraday_db_coverage_below_threshold" not in summary["issues"]
+
+    payload["program_trades_intraday"] = {}
+    summary = summarize_capture_quality(payload)
+    assert "program_intraday_db_coverage_below_threshold" in summary["issues"]
 
 
 def test_summarize_capture_quality_keeps_stale_rows_as_diagnostic_only():
@@ -75,6 +110,10 @@ def test_summarize_capture_quality_keeps_stale_rows_as_diagnostic_only():
         "program_trades": {
             "005930": {"program_net_buy_qty": 1},
             "000660": {"program_net_buy_qty": -1},
+        },
+        "program_trades_intraday": {
+            "005930": [{"time": "100000", "program_net_buy_qty": 1}],
+            "000660": [{"time": "100000", "program_net_buy_qty": -1}],
         },
     }
 

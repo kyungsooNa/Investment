@@ -23,7 +23,7 @@ def _payload(
     empty_codes: list[str] | None = None,
     stale_dropped: dict | None = None,
 ):
-    return {
+    payload = {
         "metadata": {
             "trade_date": date,
             "codes": codes,
@@ -38,6 +38,13 @@ def _payload(
         "execution_strength": execution_strength,
         "program_trades": program_trades,
     }
+    if program_source == "program_db":
+        payload["program_trades_intraday"] = {
+            code: ([{"time": "100000", "program_net_buy_qty": 0}] if value is not None else [])
+            for code, value in program_trades.items()
+            if code not in (fallback_codes or [])
+        }
+    return payload
 
 
 def _write_capture(path, payload):

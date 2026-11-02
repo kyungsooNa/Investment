@@ -33,6 +33,10 @@ def _quality_payload(
     program_trades = program_trades or {
         code: {"program_net_buy_qty": 1} for code in codes
     }
+    program_trades_intraday = {
+        code: ([{"time": "100000", "program_net_buy_qty": 1}] if value is not None else [])
+        for code, value in program_trades.items()
+    }
     return {
         "metadata": {
             "trade_date": date,
@@ -52,6 +56,7 @@ def _quality_payload(
         "intraday_minutes": intraday_minutes,
         "execution_strength": {code: 120.0 for code in codes},
         "program_trades": program_trades,
+        "program_trades_intraday": program_trades_intraday,
     }
 
 
@@ -309,6 +314,7 @@ async def test_quality_gate_metrics_exposed_and_warned_when_capture_quality_fail
         "intraday_minutes": {"005930": [{"stck_cntg_hour": "090000"}], "000660": []},
         "execution_strength": {"005930": 120.0, "000660": 130.0},
         "program_trades": {"005930": None, "000660": None},
+        "program_trades_intraday": {"005930": [], "000660": []},
     }
     capture_service.capture = AsyncMock(return_value=payload)
     logger = MagicMock()
@@ -330,10 +336,12 @@ async def test_quality_gate_metrics_exposed_and_warned_when_capture_quality_fail
         "intraday_coverage_below_threshold",
         "program_overlay_coverage_below_threshold",
         "program_db_coverage_below_threshold",
+        "program_intraday_db_coverage_below_threshold",
     ]
     assert last_result["intraday_coverage_pct"] == 50.0
     assert last_result["program_overlay_coverage_pct"] == 0.0
     assert last_result["program_db_coverage_pct"] == 0.0
+    assert last_result["program_intraday_db_coverage_pct"] == 0.0
     written_payload = capture_service.write_overlay_files.call_args.args[0]
     assert written_payload["metadata"]["quality_gate"] == {
         "valid_for_backtest": False,
@@ -342,11 +350,13 @@ async def test_quality_gate_metrics_exposed_and_warned_when_capture_quality_fail
             "intraday_coverage_below_threshold",
             "program_overlay_coverage_below_threshold",
             "program_db_coverage_below_threshold",
+            "program_intraday_db_coverage_below_threshold",
         ],
         "warnings": [],
         "intraday_coverage_pct": 50.0,
         "program_overlay_coverage_pct": 0.0,
         "program_db_coverage_pct": 0.0,
+        "program_intraday_db_coverage_pct": 0.0,
         "execution_strength_db_coverage_pct": None,
         "orderbook_db_coverage_pct": None,
         "orderbook_sparse_codes": [],
@@ -374,6 +384,7 @@ async def test_quality_gate_failure_emits_background_warning_notification(
         "intraday_minutes": {"005930": [{}], "000660": []},
         "execution_strength": {"005930": 120.0, "000660": 130.0},
         "program_trades": {"005930": None, "000660": None},
+        "program_trades_intraday": {"005930": [], "000660": []},
     }
     capture_service.capture = AsyncMock(return_value=payload)
     notification_service = MagicMock()
@@ -398,6 +409,7 @@ async def test_quality_gate_failure_emits_background_warning_notification(
         NotificationLevel.WARNING,
         "Microstructure 캡처 품질 게이트 실패",
         "20260702: intraday=50.0%, program=0.0%, program_db=0.0%, "
+        "program_intraday=0.0%, "
         "orderbook_db=-, "
         "empty_minutes=1 [000660], stale_dropped=2 [005930:2]",
     )
@@ -405,6 +417,7 @@ async def test_quality_gate_failure_emits_background_warning_notification(
         "intraday_coverage_below_threshold",
         "program_overlay_coverage_below_threshold",
         "program_db_coverage_below_threshold",
+        "program_intraday_db_coverage_below_threshold",
     ]
     assert kwargs["metadata"]["codes"] == 2
     assert kwargs["metadata"]["empty_minute_codes"] == ["000660"]
@@ -475,6 +488,10 @@ async def test_quality_gate_passes_without_warning_when_capture_quality_is_good(
             "005930": {"program_net_buy_qty": 1},
             "000660": {"program_net_buy_qty": -1},
         },
+        "program_trades_intraday": {
+            "005930": [{"time": "100000", "program_net_buy_qty": 1}],
+            "000660": [{"time": "100000", "program_net_buy_qty": -1}],
+        },
     }
     capture_service.capture = AsyncMock(return_value=payload)
     logger = MagicMock()
@@ -496,6 +513,7 @@ async def test_quality_gate_passes_without_warning_when_capture_quality_is_good(
     assert last_result["intraday_coverage_pct"] == 100.0
     assert last_result["program_overlay_coverage_pct"] == 100.0
     assert last_result["program_db_coverage_pct"] == 100.0
+    assert last_result["program_intraday_db_coverage_pct"] == 100.0
     logger.warning.assert_not_called()
 
 
