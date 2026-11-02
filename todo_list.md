@@ -167,11 +167,12 @@
 - [x] **후보 평가 진단 계측 (2026-10-24)** — 기간 실행·캠페인 결과에 날짜별 실제 평가 종목, 관측 필터 사유, 스캔 생략 사유, 미설명 후보를 기록한다. 거래 0건이어도 저장하며 주문 거부·손익 표본과 분리한다. 전체 필터 통과율은 추정하지 않는다. (`reports/validation_diagnostics_20261024.md`)
 - [x] **계측 후 전체 재진단 완료 (2026-10-25, 10-26 정정)** — 캡처 분봉·시점 일치 체결강도와 로컬 기준일 일봉을 신호 평가에 배선했다. 동일 PP 단일일 실행은 약 60초→15.6초로 단축됐다. `TradeSignal.required_data` 감사 목록을 분봉 원시 컬럼으로 오인하던 체결 replay 계약 오류도 수정했다. 최초 26일·7전략 캠페인은 7개 모두 완료했지만 VBO 랭킹 API가 현재 응답을 과거에 위임한 시점 오염이 있었다. 이를 차단한 VBO 재실행은 매수 체결 2건·매도 체결 1건·미청산 1건·실현 순손익 약 -7,656원이었다. 최초 3번째 매수는 성과 근거에서 제외한다. 남은 블로커는 유효 캡처 26/30인 walk-forward 데이터뿐이다. (`reports/validation_diagnostics_20261024.md`)
 - [x] 슬리피지/스프레드 CLI 노출 (#619) — `--market-slippage-pct`(MARKET/STOP 체결)·`--spread-pct`. LIMIT 체결엔 미적용(시뮬레이터 의미론).
-- [blocked] 활성 전략 전체 walk-forward + Monte Carlo 재실행 + 민감도 표 — 2026-11-02 기준 point-in-time 프로그램매매 시계열을 포함한 유효일 0개로 최소 30개(20/5/5)가 필요하다.
+- [blocked] 활성 전략 전체 walk-forward + Monte Carlo 재실행 + 민감도 표 — 2026-11-02 장마감 캡처가 새 point-in-time 프로그램매매 시계열 계약의 첫 유효일로 통과해 현재 1/30이며, 최소 30개(20/5/5)가 필요하다.
   - 과거 원인 ①은 이번 파일럿에서 무효화: 2026-07-03에는 **현재 시점** `data/premium_stocks.json`(PIT 아님)이 비어 후보가 없었지만, 2026-10-15 캠페인은 캡처의 날짜별 PIT base 후보를 사용했고 18/19일에 후보가 있었다.
   - 과거 원인 ②도 무효화: 6월 하순 양시장 MA 하락 → 마켓 타이밍 게이트가 스캔을 차단한다는 설명은 #766 이후 맞지 않는다. 현재 게이트는 스캔이 아니라 **매수 신호**를 막으며, 백테스트 쪽 parity는 #770/#844 후속으로 복원됐다.
   - **2026-11-02 준비도 정정**: 31일 도달 후 실제 walk-forward를 시작하자 `get_program_trade_by_stock_daily`가 과거 평가 중 현재 KIS API로 빠져 rate-limit과 시점 오염을 일으키는 것을 확인했다. 기존 `program_trades`는 장마감 최종 단일값이라 15:20 등 장중 평가에 사용할 수 없다. 캡처가 `pt_history`의 날짜별 시계열을 `program_trades_intraday`로 보존하고 replay가 평가 시각 이하 최신값만 사용하도록 수정했으며, 캡처 날짜에는 라이브 프로그램 API 폴백을 금지했다. 품질 게이트도 시계열 DB 커버리지 50%를 요구하므로 기존 31일은 전부 invalid다. (`reports/validation_program_intraday_20261102.md`)
-  - 남은 조건: 새 계약으로 유효 캡처 30거래일을 축적해야 한다. 로컬 `pt_history`에는 2026-10-23~30 6거래일 원본만 남아 있어 과거 31일 전체 소급 복원은 불가능하다. 분봉·일봉 replay 배선, 채널 돌파 실행 시각, VBO의 `required_data` 계약 오류는 2026-10-25 해소했다. 랭킹 보충분은 필터 통과 후보가 아닌 유동성 상위 종목이므로 계속 제외하고 `metadata.candidate_sources.base`만 PIT 후보로 해석한다.
+  - **2026-11-02 첫 유효 캡처 확인**: 28종목, 분봉 10,948행, 프로그램 장중 시계열 13,436행. 품질 게이트 통과(intraday/program overlay 100%, program intraday DB 82.1%, ES DB 64.3%, orderbook DB 57.1%)로 validation plan의 `valid_dates=["20261102"]`, walk-forward 준비도 1/30을 확인했다.
+  - 남은 조건: 새 계약으로 유효 캡처를 29거래일 더 축적해야 한다. 로컬 `pt_history`에는 2026-10-23~30 6거래일 원본만 남아 있어 과거 31일 전체 소급 복원은 불가능하다. 분봉·일봉 replay 배선, 채널 돌파 실행 시각, VBO의 `required_data` 계약 오류는 2026-10-25 해소했다. 랭킹 보충분은 필터 통과 후보가 아닌 유동성 상위 종목이므로 계속 제외하고 `metadata.candidate_sources.base`만 PIT 후보로 해석한다.
   - 실행 메모: 첫 런이 REST 지배적(12거래일 ≈ 18~23분), **캐시 워밍 후 변형 런 ≈ 1분** — 후보만 갖춰지면 민감도 그리드는 저렴.
 
 주요 파일: `scripts/run_backtest.py`, `services/backtest_walk_forward.py`, `docs/backtest.md`, `data/backtest_*.json`
