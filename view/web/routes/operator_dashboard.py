@@ -113,9 +113,15 @@ async def resolve_operator_alert(dedup_key: str, reason: str = ""):
     if svc is None:
         raise HTTPException(status_code=503, detail="operator_alert_service not initialized")
 
-    # dedup_key에서 source 추출 시도
     from common.operator_alert_types import AlertSource
-    if dedup_key.startswith("kill_switch:"):
+
+    active_alert = next(
+        (item for item in svc.get_active_alerts() if item.get("dedup_key") == dedup_key),
+        None,
+    )
+    if active_alert is not None:
+        source = AlertSource(active_alert["source"])
+    elif dedup_key.startswith("kill_switch:"):
         source = AlertSource.KILL_SWITCH
     else:
         source = AlertSource.RISK_GATE

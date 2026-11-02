@@ -327,3 +327,29 @@ async def test_resolve_maps_non_kill_switch_keys_to_risk_gate(web_app, alert_svc
 
     assert r.json()["resolved"] is True
     assert "risk_gate:daily_cap:S1:005930" not in alert_svc._active
+
+
+@pytest.mark.asyncio
+async def test_resolve_preserves_active_alert_source(web_app, alert_svc):
+    dedup_key = "market_status:stock_vi:UNKNOWN:000001"
+    await alert_svc.report(
+        AlertSource.MARKET_STATUS, dedup_key, "error", "VI alert", "invalid payload",
+    )
+    ctx = _make_ctx(alert_svc)
+    api_common.set_ctx(ctx)
+    try:
+        with TestClient(web_app, **authenticated_client_options(ctx)) as c:
+            r = c.post(
+                "/api/operator/alerts/market_status%3Astock_vi%3AUNKNOWN%3A000001/resolve"
+            )
+    finally:
+        api_common.set_ctx(None)
+
+    assert r.json()["resolved"] is True
+    resolved = next(
+        item
+        for item in alert_svc.get_history()
+        if item["dedup_key"] == dedup_key
+        and item["transition"] == AlertTransition.RESOLVED.value
+    )
+    assert resolved["source"] == AlertSource.MARKET_STATUS.value
