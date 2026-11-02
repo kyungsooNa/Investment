@@ -1,4 +1,5 @@
 import sqlite3
+from datetime import datetime
 from unittest.mock import AsyncMock
 
 import pytest
@@ -47,6 +48,7 @@ async def test_capture_collects_intraday_execution_strength_and_daily_program_ov
         "execution_strength": 2,
         "execution_strength_intraday_rows": 0,
         "program_trades": 2,
+        "program_trades_intraday_rows": 0,
         "orderbook_intraday_rows": 0,
     }
     assert payload["intraday_minutes"]["000001"][0]["stck_prpr"] == "10000"
@@ -75,9 +77,10 @@ async def test_capture_can_read_latest_program_overlay_from_program_db(tmp_path)
         conn.executemany(
             "INSERT INTO pt_history (code, trade_time, net_vol, created_at) VALUES (?, ?, ?, ?)",
             [
-                ("000001", "100000", 100, 1.0),
-                ("000001", "101500", 350, 2.0),
-                ("000002", "102000", -50, 3.0),
+                ("000001", "100000", 100, datetime(2026, 5, 12, 10, 0).timestamp()),
+                ("000001", "101500", 350, datetime(2026, 5, 12, 10, 15).timestamp()),
+                ("000002", "102000", -50, datetime(2026, 5, 12, 10, 20).timestamp()),
+                ("000001", "101000", 999, datetime(2026, 5, 13, 10, 10).timestamp()),
             ],
         )
 
@@ -97,6 +100,13 @@ async def test_capture_can_read_latest_program_overlay_from_program_db(tmp_path)
     assert payload["program_trades"] == {
         "000001": {"program_net_buy_qty": 350},
         "000002": {"program_net_buy_qty": -50},
+    }
+    assert payload["program_trades_intraday"] == {
+        "000001": [
+            {"time": "100000", "program_net_buy_qty": 100},
+            {"time": "101500", "program_net_buy_qty": 350},
+        ],
+        "000002": [{"time": "102000", "program_net_buy_qty": -50}],
     }
 
 
@@ -226,7 +236,12 @@ async def test_capture_program_db_falls_back_to_daily_rest_for_missing_codes(tmp
         )
         conn.execute(
             "INSERT INTO pt_history (code, trade_time, net_vol, created_at) VALUES (?,?,?,?)",
-            ("000001", "101500", 350, 1.0),
+            (
+                "000001",
+                "101500",
+                350,
+                datetime(2026, 7, 3, 10, 15).timestamp(),
+            ),
         )
     provider = AsyncMock()
     provider.get_program_trade_by_stock_daily.return_value = _response(
@@ -454,6 +469,9 @@ def test_write_overlay_files_creates_four_fixture_files(tmp_path):
         "intraday_minutes": {"000001": [{"stck_cntg_hour": "090000"}]},
         "execution_strength": {"000001": 145.5},
         "program_trades": {"000001": {"program_net_buy_qty": 30000}},
+        "program_trades_intraday": {
+            "000001": [{"time": "100000", "program_net_buy_qty": 20000}]
+        },
     }
 
     paths = BacktestMicrostructureCaptureService.write_overlay_files(payload, tmp_path / "out")
@@ -461,6 +479,9 @@ def test_write_overlay_files_creates_four_fixture_files(tmp_path):
     assert json.loads(paths["capture"].read_text(encoding="utf-8")) == payload
     assert json.loads(paths["execution_strength"].read_text(encoding="utf-8")) == {"000001": 145.5}
     assert json.loads(paths["program_trades"].read_text(encoding="utf-8")) == {"000001": 30000}
+    assert json.loads(
+        paths["program_trades_intraday"].read_text(encoding="utf-8")
+    ) == {"000001": [{"time": "100000", "program_net_buy_qty": 20000}]}
     assert json.loads(paths["intraday_minutes"].read_text(encoding="utf-8")) == {
         "000001": [{"stck_cntg_hour": "090000"}],
     }

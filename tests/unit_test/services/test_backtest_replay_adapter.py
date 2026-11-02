@@ -525,6 +525,54 @@ async def test_stock_query_replay_uses_captured_minutes_and_point_in_time_streng
 
 
 @pytest.mark.asyncio
+async def test_stock_query_replay_uses_point_in_time_program_capture_without_live_fallback(tmp_path):
+    _write_microstructure_capture(tmp_path / "replay_microstructure_20260501.json")
+    payload_path = tmp_path / "replay_microstructure_20260501.json"
+    payload = json.loads(payload_path.read_text(encoding="utf-8"))
+    payload["program_trades_intraday"] = {
+        "005930": [
+            {"time": "090030", "program_net_buy_qty": 100},
+            {"time": "090130", "program_net_buy_qty": 250},
+        ]
+    }
+    payload_path.write_text(json.dumps(payload), encoding="utf-8")
+    sqs = AsyncMock()
+    program_provider = AsyncMock()
+    clock = BacktestMarketClock()
+    clock.set_backtest_datetime(datetime(2026, 5, 1, 9, 1, 0))
+    replay = StockQueryBacktestReplayService(
+        sqs,
+        program_provider=program_provider,
+        market_clock=clock,
+        microstructure_dir=tmp_path,
+    )
+    replay.set_backtest_date("20260501")
+
+    response = await replay.get_current_price("005930")
+
+    assert response.data["output"]["pgtr_ntby_qty"] == "100"
+    program_provider.get_program_trade_by_stock_daily.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_stock_query_replay_does_not_fetch_live_program_data_when_capture_has_no_series(tmp_path):
+    _write_microstructure_capture(tmp_path / "replay_microstructure_20260501.json")
+    sqs = AsyncMock()
+    program_provider = AsyncMock()
+    replay = StockQueryBacktestReplayService(
+        sqs,
+        program_provider=program_provider,
+        microstructure_dir=tmp_path,
+    )
+    replay.set_backtest_date("20260501")
+
+    response = await replay.get_current_price("005930")
+
+    assert response.data["output"]["pgtr_ntby_qty"] == "0"
+    program_provider.get_program_trade_by_stock_daily.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_stock_query_replay_handles_current_price_view_without_live_service(tmp_path):
     _write_microstructure_capture(tmp_path / "replay_microstructure_20260501.json")
     sqs = AsyncMock()

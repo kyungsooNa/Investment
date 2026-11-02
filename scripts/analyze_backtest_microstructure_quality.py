@@ -53,6 +53,7 @@ def compute_quality_report(
     min_intraday_coverage_pct: float = 80.0,
     min_program_overlay_coverage_pct: float = 80.0,
     min_program_db_coverage_pct: float = 50.0,
+    min_program_intraday_db_coverage_pct: float = 50.0,
     min_execution_strength_db_coverage_pct: float = 50.0,
     min_orderbook_db_coverage_pct: float = 50.0,
     warn_execution_strength_db_coverage_pct: float = 70.0,
@@ -66,6 +67,7 @@ def compute_quality_report(
         min_intraday_coverage_pct=min_intraday_coverage_pct,
         min_program_overlay_coverage_pct=min_program_overlay_coverage_pct,
         min_program_db_coverage_pct=min_program_db_coverage_pct,
+        min_program_intraday_db_coverage_pct=min_program_intraday_db_coverage_pct,
         min_execution_strength_db_coverage_pct=min_execution_strength_db_coverage_pct,
         min_orderbook_db_coverage_pct=min_orderbook_db_coverage_pct,
         warn_execution_strength_db_coverage_pct=warn_execution_strength_db_coverage_pct,
@@ -96,6 +98,14 @@ def compute_quality_report(
     program_db_available = sum(
         row["program_db_available"] or 0 for row in by_date.values()
         if row["program_db_coverage_pct"] is not None
+    )
+    program_intraday_db_denominator = sum(
+        row["codes"] for row in by_date.values()
+        if row["program_intraday_db_coverage_pct"] is not None
+    )
+    program_intraday_db_available = sum(
+        row["program_intraday_db_available"] or 0 for row in by_date.values()
+        if row["program_intraday_db_coverage_pct"] is not None
     )
     es_db_denominator = sum(
         row["codes"] for row in by_date.values()
@@ -140,6 +150,14 @@ def compute_quality_report(
             coverage_pct(program_db_available, program_db_denominator)
             if program_db_denominator > 0 else None
         ),
+        "program_intraday_db_available": program_intraday_db_available,
+        "program_intraday_db_coverage_pct": (
+            coverage_pct(
+                program_intraday_db_available,
+                program_intraday_db_denominator,
+            )
+            if program_intraday_db_denominator > 0 else None
+        ),
         "program_fallback_count": fallback_count,
         "program_fallback_pct": coverage_pct(fallback_count, total_codes),
         "execution_strength_db_available": es_db_available,
@@ -165,6 +183,7 @@ def compute_quality_report(
             "min_intraday_coverage_pct": min_intraday_coverage_pct,
             "min_program_overlay_coverage_pct": min_program_overlay_coverage_pct,
             "min_program_db_coverage_pct": min_program_db_coverage_pct,
+            "min_program_intraday_db_coverage_pct": min_program_intraday_db_coverage_pct,
             "min_execution_strength_db_coverage_pct": min_execution_strength_db_coverage_pct,
             "min_orderbook_db_coverage_pct": min_orderbook_db_coverage_pct,
             "warn_execution_strength_db_coverage_pct": warn_execution_strength_db_coverage_pct,
@@ -222,6 +241,7 @@ def format_markdown_report(report: Dict[str, Any]) -> str:
         f"| execution_strength_coverage | {_fmt_pct(totals.get('execution_strength_coverage_pct'))} |",
         f"| program_overlay_coverage | {_fmt_pct(totals.get('program_overlay_coverage_pct'))} |",
         f"| program_db_coverage | {_fmt_pct(totals.get('program_db_coverage_pct'))} |",
+        f"| program_intraday_db_coverage | {_fmt_pct(totals.get('program_intraday_db_coverage_pct'))} |",
         f"| execution_strength_db_coverage | {_fmt_pct(totals.get('execution_strength_db_coverage_pct'))} |",
         f"| orderbook_db_coverage | {_fmt_pct(totals.get('orderbook_db_coverage_pct'))} |",
         f"| program_fallback_count | {totals.get('program_fallback_count', 0)} |",
@@ -230,8 +250,8 @@ def format_markdown_report(report: Dict[str, Any]) -> str:
         "",
         "## By Date",
         "",
-        "| date | codes | intraday | exec_strength | program | program_db | es_db | orderbook_db | stale | warnings | issues |",
-        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---|---|",
+        "| date | codes | intraday | exec_strength | program | program_db | program_intraday | es_db | orderbook_db | stale | warnings | issues |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|",
     ]
     for date, row in sorted((report.get("by_date") or {}).items()):
         issues = ", ".join(row.get("issues") or []) or "-"
@@ -242,6 +262,7 @@ def format_markdown_report(report: Dict[str, Any]) -> str:
             f"{_fmt_pct(row.get('execution_strength_coverage_pct'))} | "
             f"{_fmt_pct(row.get('program_overlay_coverage_pct'))} | "
             f"{_fmt_pct(row.get('program_db_coverage_pct'))} | "
+            f"{_fmt_pct(row.get('program_intraday_db_coverage_pct'))} | "
             f"{_fmt_pct(row.get('execution_strength_db_coverage_pct'))} | "
             f"{_fmt_pct(row.get('orderbook_db_coverage_pct'))} | "
             f"{row.get('stale_minute_rows_dropped', 0)} | {warnings} | {issues} |"
@@ -260,6 +281,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--min-intraday-coverage-pct", type=float, default=80.0)
     parser.add_argument("--min-program-overlay-coverage-pct", type=float, default=80.0)
     parser.add_argument("--min-program-db-coverage-pct", type=float, default=50.0)
+    parser.add_argument("--min-program-intraday-db-coverage-pct", type=float, default=50.0)
     parser.add_argument("--min-execution-strength-db-coverage-pct", type=float, default=50.0)
     parser.add_argument("--min-orderbook-db-coverage-pct", type=float, default=50.0)
     parser.add_argument("--warn-execution-strength-db-coverage-pct", type=float, default=70.0)
@@ -293,6 +315,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         min_intraday_coverage_pct=args.min_intraday_coverage_pct,
         min_program_overlay_coverage_pct=args.min_program_overlay_coverage_pct,
         min_program_db_coverage_pct=args.min_program_db_coverage_pct,
+        min_program_intraday_db_coverage_pct=args.min_program_intraday_db_coverage_pct,
         min_execution_strength_db_coverage_pct=args.min_execution_strength_db_coverage_pct,
         min_orderbook_db_coverage_pct=args.min_orderbook_db_coverage_pct,
         warn_execution_strength_db_coverage_pct=args.warn_execution_strength_db_coverage_pct,

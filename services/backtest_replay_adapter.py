@@ -369,11 +369,13 @@ class StockQueryBacktestReplayService:
             rows, "stck_sdpr", "sdpr", "prev_close", "prdy_clpr"
         ) or latest_close
         diff = latest_close - prev_close
-        program_qty = (
-            self._to_int(self._first(latest, "pgtr_ntby_qty", "program_net_buy_qty"))
-            or await self._get_program_net_buy_qty(stock_code, date_ymd)
-            or 0
+        program_qty = self._to_int(
+            self._first(latest, "pgtr_ntby_qty", "program_net_buy_qty")
         )
+        if program_qty is None:
+            program_qty = await self._get_program_net_buy_qty(stock_code, date_ymd)
+        if program_qty is None:
+            program_qty = 0
 
         return {
             "stck_prpr": str(latest_close),
@@ -469,7 +471,12 @@ class StockQueryBacktestReplayService:
             raise ValueError(f"invalid microstructure replay capture: {path}") from exc
         if not isinstance(payload, dict):
             raise ValueError(f"invalid microstructure replay capture: {path}")
-        for field in ("metadata", "intraday_minutes", "execution_strength_intraday"):
+        for field in (
+            "metadata",
+            "intraday_minutes",
+            "execution_strength_intraday",
+            "program_trades_intraday",
+        ):
             value = payload.get(field)
             if value is not None and not isinstance(value, dict):
                 raise ValueError(f"invalid microstructure replay capture: {path}")
@@ -497,6 +504,17 @@ class StockQueryBacktestReplayService:
             return ""
 
     async def _get_program_net_buy_qty(self, stock_code: str, date_ymd: str) -> int | None:
+        capture = self._load_capture(date_ymd)
+        if capture is not None:
+            rows = (capture.get("program_trades_intraday") or {}).get(stock_code) or []
+            cutoff = self._cutoff_hhmmss()
+            values = [
+                self._to_int(self._first(row, "program_net_buy_qty", "net_buy_qty"))
+                for row in rows
+                if isinstance(row, dict)
+                and (not cutoff or str(row.get("time") or "").zfill(6) <= cutoff)
+            ]
+            return next((value for value in reversed(values) if value is not None), None)
         if self._program_provider is None:
             return None
         key = (stock_code, date_ymd)

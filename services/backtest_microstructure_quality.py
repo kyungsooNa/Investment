@@ -9,6 +9,7 @@ class MicrostructureQualityThresholds:
     min_intraday_coverage_pct: float = 80.0
     min_program_overlay_coverage_pct: float = 80.0
     min_program_db_coverage_pct: float = 50.0
+    min_program_intraday_db_coverage_pct: float = 50.0
     min_execution_strength_db_coverage_pct: float = 50.0
     min_orderbook_db_coverage_pct: float = 50.0
     warn_execution_strength_db_coverage_pct: float = 70.0
@@ -60,6 +61,16 @@ def summarize_capture_quality(
     if program_source == "program_db":
         program_db_available = max(0, program_overlay_available - len(program_fallback_codes))
         program_db_coverage_pct = coverage_pct(program_db_available, code_count)
+    program_trades_intraday = payload.get("program_trades_intraday") or {}
+    program_intraday_db_available: Optional[int] = None
+    program_intraday_db_coverage_pct: Optional[float] = None
+    if program_source == "program_db":
+        program_intraday_db_available = sum(
+            1 for code in codes if program_trades_intraday.get(code)
+        )
+        program_intraday_db_coverage_pct = coverage_pct(
+            program_intraday_db_available, code_count
+        )
 
     execution_strength_source = str(metadata.get("execution_strength_source") or "")
     execution_strength_intraday = payload.get("execution_strength_intraday") or {}
@@ -111,6 +122,12 @@ def summarize_capture_quality(
     ):
         issues.append("program_db_coverage_below_threshold")
     if (
+        program_intraday_db_coverage_pct is not None
+        and program_intraday_db_coverage_pct
+        < thresholds.min_program_intraday_db_coverage_pct
+    ):
+        issues.append("program_intraday_db_coverage_below_threshold")
+    if (
         execution_strength_db_coverage_pct is not None
         and execution_strength_db_coverage_pct
         < thresholds.min_execution_strength_db_coverage_pct
@@ -147,6 +164,8 @@ def summarize_capture_quality(
         "program_fallback_pct": coverage_pct(len(program_fallback_codes), code_count),
         "program_db_available": program_db_available,
         "program_db_coverage_pct": program_db_coverage_pct,
+        "program_intraday_db_available": program_intraday_db_available,
+        "program_intraday_db_coverage_pct": program_intraday_db_coverage_pct,
         "execution_strength_source": execution_strength_source,
         "execution_strength_db_available": execution_strength_db_available,
         "execution_strength_db_coverage_pct": execution_strength_db_coverage_pct,
