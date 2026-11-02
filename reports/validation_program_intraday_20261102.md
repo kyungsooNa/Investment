@@ -34,3 +34,24 @@ walk-forward, Monte Carlo, parameter-stability를 실행한다.
 - 전체 단위 테스트: 10,237 passed.
 - 전체 통합 테스트: 323 passed.
 - `python -m scripts.run_validation_campaign --plan-only`: 유효일 0, walk-forward waiting.
+
+## 부분 소급 복원 (2026-11-02 추가)
+
+위 "전체 소급 복원 불가"는 31일 전체 기준으로는 맞지만, 보존된 6거래일 중 4일은 복원 가능했다.
+`pt_history` 는 `RETENTION_DAYS=7` 로 `created_at` 7일 경과 행을 지우므로, 먼저 DB를
+`sqlite3` backup API로 `data/program_subscribe/backups/program_trading_20261102.db` 에 고정한 뒤
+`scripts/backfill_program_trades_intraday.py` 로 캡처와 동일한 조회 규칙(거래일 epoch 경계 +
+`start_hhmmss`~`end_hhmmss`)을 적용했다. 원본 캡처는 `data/backtest_microstructure_backup_20261102/` 에 보존했다.
+
+| 날짜 | 시계열 보유 종목 | program intraday 커버리지 | 게이트 |
+|---|---|---|---|
+| 20261023 | 0 | 0% (원본 없음) | 미적용 |
+| 20261026 | 0 | 0% (1행만 잔존) | 미적용 |
+| 20261027 | 23/28 | 82.1% | 통과 |
+| 20261028 | 20/26 | 76.9% | 통과 |
+| 20261029 | 17/24 | 70.8% | 통과 |
+| 20261030 | 22/27 | 81.5% | 통과 |
+
+- `python -m scripts.analyze_backtest_microstructure_quality --date-from 20261027 --date-to 20261102 --fail-on-gate`: 전 날짜 통과.
+- `python -m scripts.run_validation_campaign --plan-only`: `valid_dates` 5개(10-27~30, 11-02), walk-forward 5/30 대기.
+- 복원 데이터도 장중 시점에 수집된 원본 시계열이라 평가 시각 이하 값만 쓰는 replay 계약이 그대로 적용된다.
