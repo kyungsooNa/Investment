@@ -915,10 +915,20 @@ class StockQueryService:
             self.logger.error(f"현재 상한가 종목 조회 중 오류 발생: {e}", exc_info=True)
             raise
 
+    async def get_asking_price(
+        self,
+        stock_code: str,
+        exchange: Exchange = Exchange.KRX,
+    ) -> ResCommonResponse:
+        """종목의 원본 실시간 호가 응답을 반환한다."""
+        if exchange == Exchange.KRX:
+            return await self.market_data_service.get_asking_price(stock_code)
+        return await self.market_data_service.get_asking_price(stock_code, exchange=exchange)
+
     async def handle_get_asking_price(self, stock_code: str, depth: int = 10):
         """종목의 실시간 호가 정보 조회 및 출력."""
         self.logger.info(f"Service - {stock_code} 호가 정보 조회 요청")
-        response = await self.market_data_service.get_asking_price(stock_code)
+        response = await self.get_asking_price(stock_code)
 
         if not response or response.rt_cd != ErrorCode.SUCCESS.value:
             msg = response.msg1 if response else "응답 없음"

@@ -375,7 +375,7 @@ class ResStockFullInfoApiOutput(BaseModel):
     d250_lwpr: str = ""  # 250일 최저가
     d250_lwpr_date: str = ""  # 250일 최저가 기록일
     d250_lwpr_vrss_prpr_rate: str = ""  # 현재가 대비 250일 최저가 등락률 (%)
-    dmrs_val: str = ""  # 매도호가 1 (최우선)
+    dmrs_val: str = ""  # 디저항 값 (매도호가가 아님)
     dmsp_val: str = ""  # 매수호가 1 (최우선)
     dryy_hgpr_date: str = ""  # 당해 연도 최고가 기록일
     dryy_hgpr_vrss_prpr_rate: str = ""  # 현재가 대비 연중 최고가 등락률 (%)
