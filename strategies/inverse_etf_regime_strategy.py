@@ -118,19 +118,13 @@ class InverseEtfRegimeStrategy(LiveStrategy):
             return []
 
         cp_resp = await self._sqs.get_current_price(code, caller=self.name)
-        current, open_price, ask_price, change_rate = self._extract_entry_quote(cp_resp)
+        current, open_price, change_rate = self._extract_entry_quote(cp_resp)
         if current <= 0:
             self._logger.info({"event": "entry_rejected", "code": code, "reason": "invalid_current_price"})
             return []
         if open_price <= 0:
             self._logger.info({
                 "event": "entry_rejected", "code": code, "reason": "market_not_open",
-                "current": current,
-            })
-            return []
-        if ask_price <= 0:
-            self._logger.info({
-                "event": "entry_rejected", "code": code, "reason": "ask_price_unavailable",
                 "current": current,
             })
             return []
@@ -146,6 +140,15 @@ class InverseEtfRegimeStrategy(LiveStrategy):
             self._logger.info({
                 "event": "entry_rejected", "code": code, "reason": "below_trend_ma",
                 "current": current, "ma": round(ma, 2),
+            })
+            return []
+
+        asking_resp = await self._sqs.get_asking_price(code)
+        ask_price = self._extract_best_ask(asking_resp)
+        if ask_price <= 0:
+            self._logger.info({
+                "event": "entry_rejected", "code": code, "reason": "ask_price_unavailable",
+                "current": current,
             })
             return []
 
@@ -214,7 +217,7 @@ class InverseEtfRegimeStrategy(LiveStrategy):
             return None
 
         cp_resp = await self._sqs.get_current_price(code, caller=self.name)
-        current, open_price, _, change_rate = self._extract_entry_quote(cp_resp)
+        current, open_price, change_rate = self._extract_entry_quote(cp_resp)
         if current <= 0:
             return None
 
@@ -331,14 +334,14 @@ class InverseEtfRegimeStrategy(LiveStrategy):
             return 0
 
     @staticmethod
-    def _extract_entry_quote(resp) -> tuple[int, int, int, float]:
-        """현재가·시가·매도1호가·전일 대비 등락률을 추출한다."""
+    def _extract_entry_quote(resp) -> tuple[int, int, float]:
+        """현재가·시가·전일 대비 등락률을 추출한다."""
         if not resp or getattr(resp, "rt_cd", "") != "0":
-            return 0, 0, 0, 0.0
+            return 0, 0, 0.0
         data = getattr(resp, "data", None)
         out = data.get("output") if isinstance(data, dict) else data
         if not out:
-            return 0, 0, 0, 0.0
+            return 0, 0, 0.0
 
         def value(*keys: str) -> int:
             try:
@@ -364,9 +367,25 @@ class InverseEtfRegimeStrategy(LiveStrategy):
         return (
             value("stck_prpr"),
             value("stck_oprc"),
-            value("dmrs_val", "askp1"),
             decimal_value("prdy_ctrt"),
         )
+
+    @staticmethod
+    def _extract_best_ask(resp) -> int:
+        """호가 API output1에서 매도 1호가를 추출한다."""
+        if not resp or getattr(resp, "rt_cd", "") != "0":
+            return 0
+        data = getattr(resp, "data", None)
+        output = data.get("output1") if isinstance(data, dict) else None
+        if isinstance(output, list):
+            output = output[0] if output else None
+        if not output:
+            return 0
+        try:
+            raw = output.get("askp1", 0) if isinstance(output, dict) else getattr(output, "askp1", 0)
+            return int(raw or 0)
+        except (TypeError, ValueError):
+            return 0
 
     @staticmethod
     def _latest_ma(resp) -> Optional[float]:

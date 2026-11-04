@@ -31,6 +31,13 @@ def _price_resp(current="10000", *, open_price=None, ask_price=None, change_rate
     )
 
 
+def _asking_resp(ask_price="10000"):
+    return ResCommonResponse(
+        rt_cd="0", msg1="OK",
+        data={"output1": {"askp1": ask_price}},
+    )
+
+
 def _ma_resp(value):
     return ResCommonResponse(
         rt_cd="0", msg1="OK",
@@ -61,6 +68,7 @@ def mock_deps():
     logger = MagicMock()
 
     sqs.get_current_price = AsyncMock(spec=StockQueryService.get_current_price)
+    sqs.get_asking_price = AsyncMock(spec=StockQueryService.get_asking_price)
     regime.classify = AsyncMock(spec=MarketRegimeService.classify)
     indicator.get_moving_average = AsyncMock(spec=IndicatorService.get_moving_average)
 
@@ -86,6 +94,7 @@ def bear_setup(strategy, mock_deps):
     regime.classify.return_value = _regime("bear")
     indicator.get_moving_average.return_value = _ma_resp(9500.0)  # current(10000) > MA
     sqs.get_current_price.return_value = _price_resp("10000", open_price="9900")
+    sqs.get_asking_price.return_value = _asking_resp("10000")
     return strategy, sqs, regime, indicator, tm, logger
 
 
@@ -135,8 +144,9 @@ async def test_scan_uses_best_ask_and_waits_for_fill_before_registering_position
     strat, sqs, _, indicator, _, _ = bear_setup
     indicator.get_moving_average.return_value = _ma_resp(1004.0)
     sqs.get_current_price.return_value = _price_resp(
-        "1075", open_price="1050", ask_price="1112"
+        "1075", open_price="1050", ask_price="9999"
     )
+    sqs.get_asking_price.return_value = _asking_resp("1076")
     strat._cfg = InverseEtfRegimeConfig(
         total_portfolio_krw=300_000,
         position_size_pct=100,
@@ -146,10 +156,29 @@ async def test_scan_uses_best_ask_and_waits_for_fill_before_registering_position
 
     sig = (await strat.scan())[0]
 
-    assert sig.price == 1112
-    assert sig.qty == 269
+    assert sig.price == 1076
+    assert sig.qty == 278
     assert strat._position_state == {}
     strat._save_state.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_scan_rejects_when_best_ask_is_unavailable(bear_setup):
+    """현재가 응답의 dmrs_val을 호가로 대체하지 않고 진입을 거부한다."""
+    strat, sqs, _, indicator, _, logger = bear_setup
+    indicator.get_moving_average.return_value = _ma_resp(1004.0)
+    sqs.get_current_price.return_value = _price_resp(
+        "1075", open_price="1050", ask_price="1112"
+    )
+    sqs.get_asking_price.return_value = ResCommonResponse(
+        rt_cd="0", msg1="OK", data={"output1": {"askp1": ""}}
+    )
+
+    assert await strat.scan() == []
+    assert any(
+        call.args and call.args[0].get("reason") == "ask_price_unavailable"
+        for call in logger.info.call_args_list
+    )
 
 
 @pytest.mark.asyncio
