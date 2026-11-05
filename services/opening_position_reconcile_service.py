@@ -32,6 +32,7 @@ class OpeningPositionReconcileService:
         paper_account_number: Optional[str] = None,
         paper_account_rollover_state_file_path: str = "data/paper_account_reconcile_state.json",
         block_force_close_on_paper_rollover: bool = True,
+        strategy_dry_run: bool = False,
         logger: Optional[logging.Logger] = None,
     ) -> None:
         self._broker = broker
@@ -42,9 +43,21 @@ class OpeningPositionReconcileService:
         self._paper_account_number = str(paper_account_number or "").strip()
         self._paper_account_rollover_state_file = Path(paper_account_rollover_state_file_path)
         self._block_force_close_on_paper_rollover = bool(block_force_close_on_paper_rollover)
+        self._strategy_dry_run = bool(strategy_dry_run)
         self._logger = logger or logging.getLogger(__name__)
 
     async def reconcile_once(self, *, exchange: Exchange = Exchange.KRX) -> dict:
+        if self._strategy_dry_run:
+            self._logger.info(
+                "[OpeningPositionReconcile] strategy dry-run: virtual ledger is authoritative; "
+                "broker reconciliation skipped"
+            )
+            return {
+                **self._empty_result(),
+                "skipped": True,
+                "skip_reason": "strategy_dry_run",
+            }
+
         response = await self._call(self._broker.get_account_balance, exchange=exchange)
         if not self._is_success_response(response):
             msg = getattr(response, "msg1", None) or "잔고 조회 실패"

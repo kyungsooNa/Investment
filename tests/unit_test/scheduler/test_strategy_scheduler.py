@@ -3718,6 +3718,21 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(strategy._position_state, {})
         strategy._save_state.assert_called_once()
 
+    async def test_run_reconciliation_skips_broker_in_dry_run_and_keeps_strategy_state(self):
+        scheduler, vm, oes, _, _ = self._make_scheduler(dry_run=True)
+        strategy = MockStrategy(name="인버스ETF레짐")
+        held_state = SimpleNamespace(entry_price=1212)
+        strategy._position_state = {"114800": held_state}
+        scheduler.register(StrategySchedulerConfig(strategy=strategy))
+        oes.broker_api_wrapper.get_account_balance = AsyncMock()
+        vm.reconcile_with_broker = AsyncMock()
+
+        await scheduler._run_reconciliation()
+
+        oes.broker_api_wrapper.get_account_balance.assert_not_awaited()
+        vm.reconcile_with_broker.assert_not_awaited()
+        self.assertIs(strategy._position_state["114800"], held_state)
+
     async def test_run_reconciliation_emits_warning_on_mismatch(self):
         scheduler, vm, oes, _, _ = self._make_scheduler(dry_run=False)
         scheduler._notification_service = AsyncMock()

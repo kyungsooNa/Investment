@@ -936,10 +936,10 @@ class ServiceContainer:
                         "data/paper_account_reconcile_state.json",
                     ),
                     block_force_close_on_paper_rollover=getattr(
-                        reconcile_cfg,
-                        "block_force_close_on_paper_rollover",
-                        True,
+                        reconcile_cfg, "block_force_close_on_paper_rollover", True,
                     ),
+                    strategy_dry_run=bool(
+                        _config_value(ctx.full_config, "strategy_scheduler_dry_run", False)),
                     logger=ctx.logger,
                 )
                 ctx.opening_position_reconcile_task = OpeningPositionReconcileTask(

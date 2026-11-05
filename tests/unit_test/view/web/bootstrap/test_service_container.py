@@ -723,6 +723,19 @@ def test_service_container_trading_mode_keeps_realtime_intraday_and_skips_web_ba
     assert ctx.oneil_universe_service is patched_service_container_deps["OneilUniverseService"].return_value
 
 
+def test_service_container_passes_strategy_dry_run_to_opening_reconcile(patched_service_container_deps):
+    """가상 전략 원장이 브로커 잔고 대사로 강제 종결되지 않도록 dry-run을 전달한다."""
+    from view.web.bootstrap.service_container import ServiceContainer
+
+    ctx = _make_fake_context()
+    ctx.full_config = {"strategy_scheduler_dry_run": True}
+
+    ServiceContainer(ctx).run()
+
+    kwargs = patched_service_container_deps["OpeningPositionReconcileService"].call_args.kwargs
+    assert kwargs["strategy_dry_run"] is True
+
+
 def test_service_container_creates_universe_and_tasks(patched_service_container_deps):
     """OneilUniverseService, RankingTask, ThemeDailyLeaderReportTask, StrategyLogReportTask 가 생성된다."""
     from view.web.bootstrap.service_container import ServiceContainer
