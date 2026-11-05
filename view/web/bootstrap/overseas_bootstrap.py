@@ -1,7 +1,7 @@
 """OverseasBootstrap — 해외(미국장) 서비스·태스크 조립을 전담한다.
 
 `ServiceContainer.run()` 에서 옮겨온 조립 경로를 담는다 — 관심종목 등락 알림,
-dry-run 파이프라인(전략 6종 + suite + after-market 태스크), 수동 주문 게이팅 서비스,
+dry-run 파이프라인(전략 7종 + suite + after-market 태스크), 수동 주문 게이팅 서비스,
 장중 폴링 경로(전략 7종이 태스크 하나를 공유), 리스크게이트·대사 태스크.
 조립 순서·조건·후주입은 이관 전과 동일하다.
 
@@ -32,6 +32,7 @@ from services.overseas_intraday_squeeze_breakout_service import (
     OverseasIntradaySqueezeBreakoutService,
 )
 from services.overseas_intraday_vbo_service import OverseasIntradayVBOService
+from services.overseas_inverse_etf_dryrun_service import OverseasInverseEtfDryRunService
 from services.overseas_order_execution_service import OverseasOrderExecutionService
 from services.overseas_pocket_pivot_dryrun_service import OverseasPocketPivotDryRunService
 from services.overseas_position_sizing_service import OverseasPositionSizingService, extract_fx_krw_per_usd
@@ -104,7 +105,7 @@ class OverseasBootstrap:
         )
 
     def build_dryrun_pipeline(self) -> None:
-        """해외 VBO/PP/BGU/CB/RSI2/OSB dry-run 파이프라인 조립 (주문 경로 없음 — 실주문 불가).
+        """해외 VBO/PP/BGU/CB/RSI2/OSB/인버스 dry-run 조립 (주문 경로 없음).
 
         overseas_us active 분기와 국내 active 공존 경로가 공유한다.
         `overseas_stock_code_repository` 가 없으면 dry-run 부분은 no-op(수동 주문 게이팅
@@ -119,6 +120,7 @@ class OverseasBootstrap:
         ctx.overseas_cb_dryrun_service = None
         ctx.overseas_rsi2_dryrun_service = None
         ctx.overseas_osb_dryrun_service = None
+        ctx.overseas_inverse_etf_dryrun_service = None
         ctx.overseas_dryrun_task = None
         self._build_market_regime()
         if getattr(ctx, "event_shadow_journal_service", None) is None:
@@ -206,6 +208,10 @@ class OverseasBootstrap:
             position_sizing_service=overseas_position_sizing_service,
             fx_provider=_overseas_fx_provider,
         )
+        ctx.overseas_inverse_etf_dryrun_service = OverseasInverseEtfDryRunService(
+            stock_query_service=ctx.stock_query_service, market_regime_service=ctx.us_market_regime_service,
+            shadow_journal=ctx.event_shadow_journal_service, logger=ctx.logger,
+            position_sizing_service=overseas_position_sizing_service, fx_provider=_overseas_fx_provider)
         overseas_dryrun_suite = OverseasDryRunSuiteService(
             [
                 ctx.overseas_vbo_dryrun_service,
@@ -213,7 +219,7 @@ class OverseasBootstrap:
                 ctx.overseas_bgu_dryrun_service,
                 ctx.overseas_cb_dryrun_service,
                 ctx.overseas_rsi2_dryrun_service,
-                ctx.overseas_osb_dryrun_service,
+                ctx.overseas_osb_dryrun_service, ctx.overseas_inverse_etf_dryrun_service,
             ],
             logger=ctx.logger,
         )
