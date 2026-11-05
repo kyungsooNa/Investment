@@ -132,6 +132,33 @@ async def test_restore_state_then_orders_allowed():
 # ─── Scenario 2: local-only HOLD → force_close ──────────────────────────────
 
 @pytest.mark.asyncio
+async def test_strategy_dry_run_preserves_local_hold_without_broker_reconcile():
+    """재시작 후에도 dry-run HOLD는 비어 있는 브로커 잔고로 종결하지 않는다."""
+    broker = MagicMock()
+    broker.get_account_balance = AsyncMock(
+        return_value=_success(data={"output1": []})
+    )
+    vts = _make_vts([
+        {"code": "114800", "strategy": "inverse_etf_regime", "qty": 247}
+    ])
+    svc = OpeningPositionReconcileService(
+        broker=broker,
+        virtual_trade_service=vts,
+        strategy_dry_run=True,
+        logger=logging.getLogger("test_dry_run_reconcile"),
+    )
+
+    result = await svc.reconcile_once()
+
+    assert result["skip_reason"] == "strategy_dry_run"
+    assert vts.get_holds() == [
+        {"code": "114800", "strategy": "inverse_etf_regime", "qty": 247}
+    ]
+    broker.get_account_balance.assert_not_awaited()
+    vts._repo.log_sell_async.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_local_only_hold_triggers_force_close():
     """로컬 HOLD이나 broker 잔고 없음 → force_close 처리, VTS에서 해당 종목 제거."""
     # broker 잔고에 005930 없음

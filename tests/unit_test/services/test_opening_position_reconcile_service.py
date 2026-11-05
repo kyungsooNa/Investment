@@ -9,6 +9,35 @@ from services.opening_position_reconcile_service import OpeningPositionReconcile
 
 
 @pytest.mark.asyncio
+async def test_opening_reconcile_skips_broker_reconcile_in_strategy_dry_run():
+    """전략 dry-run 원장은 주문되지 않은 브로커 잔고로 강제 종결하지 않는다."""
+    broker = MagicMock()
+    broker.get_account_balance = AsyncMock()
+    virtual_trade_service = MagicMock()
+    virtual_trade_service.reconcile_with_broker = AsyncMock()
+    service = OpeningPositionReconcileService(
+        broker=broker,
+        virtual_trade_service=virtual_trade_service,
+        strategy_dry_run=True,
+        logger=MagicMock(),
+    )
+
+    result = await service.reconcile_once()
+
+    broker.get_account_balance.assert_not_awaited()
+    virtual_trade_service.reconcile_with_broker.assert_not_awaited()
+    assert result == {
+        "force_closed": [],
+        "unknown_in_broker": [],
+        "quantity_mismatches": [],
+        "mismatch_count": 0,
+        "error": None,
+        "skipped": True,
+        "skip_reason": "strategy_dry_run",
+    }
+
+
+@pytest.mark.asyncio
 async def test_opening_reconcile_delegates_to_virtual_trade_reconcile():
     broker = MagicMock()
     broker.get_account_balance = AsyncMock(

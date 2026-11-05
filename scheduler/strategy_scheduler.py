@@ -1795,6 +1795,13 @@ class StrategyScheduler:
 
     async def _run_reconciliation(self):
         """실제 증권사 잔고와 로컬 DB를 비교하여 불일치를 처리한다 (장 시작 시 1회)."""
+        if self._dry_run:
+            self._logger.info(
+                "[Reconciliation] strategy dry-run: virtual ledger is authoritative; "
+                "broker reconciliation skipped"
+            )
+            return
+
         # 계좌 스냅샷 갱신 — 장 시작 직후 1회, 이후 포지션 사이징에서 캐시 사용
         if self._account_snapshot_cache is not None:
             try:
