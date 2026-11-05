@@ -853,7 +853,7 @@ def test_service_container_wires_overseas_dryrun_position_sizing(patched_service
 
 
 def test_service_container_wires_overseas_oneil_services_into_dryrun_suite(patched_service_container_deps):
-    """해외 dry-run 태스크는 VBO, PP, BGU, CB, RSI2, OSB 서비스를 함께 실행하는 suite 를 주입받는다."""
+    """해외 dry-run 태스크는 기존 6종과 PSQ 인버스 서비스를 함께 실행한다."""
     from config.config_loader import AppConfig
     from view.web.bootstrap.service_container import ServiceContainer
 
@@ -874,6 +874,7 @@ def test_service_container_wires_overseas_oneil_services_into_dryrun_suite(patch
          patch("view.web.bootstrap.overseas_bootstrap.OverseasChannelBreakoutDryRunService", autospec=True) as cb_cls, \
          patch("view.web.bootstrap.overseas_bootstrap.OverseasRSI2DryRunService", autospec=True) as rsi2_cls, \
          patch("view.web.bootstrap.overseas_bootstrap.OverseasSqueezeBreakoutDryRunService", autospec=True) as osb_cls, \
+         patch("view.web.bootstrap.overseas_bootstrap.OverseasInverseEtfDryRunService", autospec=True) as inverse_cls, \
          patch("view.web.bootstrap.overseas_bootstrap.OverseasDryRunSuiteService", autospec=True) as suite_cls, \
          patch("view.web.bootstrap.overseas_bootstrap.OverseasDryRunTask", autospec=True) as task_cls:
         ServiceContainer(ctx).run()
@@ -899,6 +900,11 @@ def test_service_container_wires_overseas_oneil_services_into_dryrun_suite(patch
     assert osb_kwargs["candidate_service"] is candidate_cls.return_value
     assert osb_kwargs["position_sizing_service"] is sizing_cls.return_value
     assert callable(osb_kwargs["fx_provider"])
+    inverse_kwargs = inverse_cls.call_args.kwargs
+    assert inverse_kwargs["stock_query_service"] is ctx.stock_query_service
+    assert inverse_kwargs["market_regime_service"] is ctx.us_market_regime_service
+    assert inverse_kwargs["position_sizing_service"] is sizing_cls.return_value
+    assert callable(inverse_kwargs["fx_provider"])
     suite_cls.assert_called_once_with(
         [
             vbo_cls.return_value,
@@ -907,6 +913,7 @@ def test_service_container_wires_overseas_oneil_services_into_dryrun_suite(patch
             cb_cls.return_value,
             rsi2_cls.return_value,
             osb_cls.return_value,
+            inverse_cls.return_value,
         ],
         logger=ctx.logger,
     )
@@ -916,6 +923,7 @@ def test_service_container_wires_overseas_oneil_services_into_dryrun_suite(patch
     assert ctx.overseas_cb_dryrun_service is cb_cls.return_value
     assert ctx.overseas_rsi2_dryrun_service is rsi2_cls.return_value
     assert ctx.overseas_osb_dryrun_service is osb_cls.return_value
+    assert ctx.overseas_inverse_etf_dryrun_service is inverse_cls.return_value
 
 
 def test_service_container_wires_overseas_dryrun_us_market_clock(patched_service_container_deps):

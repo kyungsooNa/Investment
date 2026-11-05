@@ -965,7 +965,7 @@ class ServiceContainer:
                 ctx.overseas_vbo_dryrun_service = None
                 ctx.overseas_pp_dryrun_service = None
                 ctx.overseas_bgu_dryrun_service = None
-                ctx.overseas_cb_dryrun_service = None
+                ctx.overseas_cb_dryrun_service = ctx.overseas_inverse_etf_dryrun_service = None
                 ctx.overseas_dryrun_task = None
                 ctx.overseas_manual_order_service = None
                 ctx.overseas_trade_repository = None
