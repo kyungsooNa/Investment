@@ -59,6 +59,8 @@ class DataQualityService:
         self._logger = logger
         self._operator_alert_service = operator_alert_service
         self._last_good_price: dict[str, float] = {}
+        self._last_good_price_ts: dict[str, float] = {}
+        self._last_good_business_date: dict[str, str] = {}
         self._last_result: DataQualityResult = DataQualityResult(ok=True, reason="not_checked")
         self._profile = "base"
         self._violation_history: list[dict[str, Any]] = []
@@ -250,6 +252,7 @@ class DataQualityService:
         high = self._to_float(realtime_data.get("주식최고가") or realtime_data.get("high"))
         low = self._to_float(realtime_data.get("주식최저가") or realtime_data.get("low"))
         source_ts = self._to_float(realtime_data.get("source_ts") or realtime_data.get("received_at"))
+        business_date = str(realtime_data.get("영업일자") or realtime_data.get("business_date") or "").strip()
         latency = max(received_at - source_ts, 0.0) if source_ts else 0.0
 
         if not code or price is None or price <= 0 or volume is None or volume < 0:
@@ -274,7 +277,19 @@ class DataQualityService:
             )
 
         previous = self._last_good_price.get(code)
-        if previous and previous > 0:
+        previous_ts = self._last_good_price_ts.get(code)
+        previous_business_date = self._last_good_business_date.get(code, "")
+        baseline_age = received_at - previous_ts if previous_ts is not None else None
+        baseline_is_fresh = (
+            baseline_age is not None
+            and 0.0 <= baseline_age <= self._cfg.max_tick_age_sec
+        )
+        same_business_date = not (
+            business_date
+            and previous_business_date
+            and business_date != previous_business_date
+        )
+        if previous and previous > 0 and baseline_is_fresh and same_business_date:
             jump_pct = abs(price - previous) / previous * 100
             if jump_pct > self._cfg.max_price_jump_pct:
                 return self._result(
@@ -287,6 +302,8 @@ class DataQualityService:
                 )
 
         self._last_good_price[code] = price
+        self._last_good_price_ts[code] = received_at
+        self._last_good_business_date[code] = business_date
         return self._result(True, "ok", "info", code=code, latency_sec=latency)
 
     def validate_execution_report(self, data: dict) -> DataQualityResult:

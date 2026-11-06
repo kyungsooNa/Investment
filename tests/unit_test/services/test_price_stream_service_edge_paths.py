@@ -93,7 +93,7 @@ async def test_shutdown_cancels_tasks_that_outlive_the_timeout():
 # --- 품질 게이트 -------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_quality_rejected_tick_is_counted_and_notified():
+async def test_quality_rejected_tick_is_counted_without_direct_notification():
     quality = MagicMock()
     quality.validate_price_tick.return_value = MagicMock(
         ok=False, severity="error", reason="가격 역주행", code="005930",
@@ -107,9 +107,8 @@ async def test_quality_rejected_tick_is_counted_and_notified():
 
     assert svc.tick_ingest_stats_snapshot()["005930"]["quality_reject"] == 1
     repo.update_realtime_data.assert_not_called()
-    assert len(svc._background_tasks) == 1
-    await svc.shutdown()
-    notifications.emit.assert_awaited_once()
+    assert len(svc._background_tasks) == 0
+    notifications.emit.assert_not_awaited()
 
 
 def test_quality_rejection_notification_outside_a_loop_is_swallowed():

@@ -236,6 +236,53 @@ def test_validate_price_tick_rejects_jump_and_latency(monkeypatch):
     assert latency.reason == "latency_exceeded"
 
 
+def test_validate_price_tick_resets_jump_baseline_after_tick_gap():
+    svc = DataQualityService(DataQualityConfig(max_price_jump_pct=10.0, max_tick_age_sec=5.0))
+
+    first = svc.validate_price_tick(
+        {"유가증권단축종목코드": "180640", "주식현재가": "100", "누적거래량": "1"},
+        received_at=100.0,
+    )
+    rejected = svc.validate_price_tick(
+        {"유가증권단축종목코드": "180640", "주식현재가": "120", "누적거래량": "2"},
+        received_at=101.0,
+    )
+    recovered = svc.validate_price_tick(
+        {"유가증권단축종목코드": "180640", "주식현재가": "120", "누적거래량": "3"},
+        received_at=106.0,
+    )
+
+    assert first.ok is True
+    assert rejected.ok is False
+    assert recovered.ok is True
+
+
+def test_validate_price_tick_resets_jump_baseline_on_business_date_change():
+    svc = DataQualityService(DataQualityConfig(max_price_jump_pct=10.0, max_tick_age_sec=60.0))
+
+    assert svc.validate_price_tick(
+        {
+            "유가증권단축종목코드": "180640",
+            "주식현재가": "100",
+            "누적거래량": "1",
+            "영업일자": "20261105",
+        },
+        received_at=100.0,
+    ).ok
+
+    next_day = svc.validate_price_tick(
+        {
+            "유가증권단축종목코드": "180640",
+            "주식현재가": "120",
+            "누적거래량": "1",
+            "영업일자": "20261106",
+        },
+        received_at=101.0,
+    )
+
+    assert next_day.ok is True
+
+
 def test_validate_execution_report_missing_fields():
     svc = DataQualityService()
 
