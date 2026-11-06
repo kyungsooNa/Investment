@@ -499,6 +499,30 @@ def test_on_price_tick_invalid_quality_not_cached(mock_stock_repo, mock_logger):
     mock_logger.warning.assert_called()
 
 
+@pytest.mark.asyncio
+async def test_on_price_tick_invalid_quality_uses_centralized_alert_only(mock_stock_repo, mock_logger):
+    dq = MagicMock()
+    dq.validate_price_tick.return_value = DataQualityResult(
+        ok=False,
+        severity="error",
+        reason="invalid_tick",
+        code="180640",
+    )
+    notification = MagicMock()
+    notification.emit = AsyncMock()
+    svc = PriceStreamService(
+        stock_repo=mock_stock_repo,
+        logger=mock_logger,
+        data_quality_service=dq,
+        notification_service=notification,
+    )
+
+    svc.on_price_tick({"유가증권단축종목코드": "180640", "주식현재가": "212000", "누적거래량": "1"})
+    await svc.shutdown()
+
+    notification.emit.assert_not_awaited()
+
+
 def test_exchange_specific_tick_only_feeds_matching_sse_queue(price_stream_service, mock_stock_repo):
     """거래소 지정(KRX/NXT) 틱은 공유 캐시를 건드리지 않고 같은 거래소 SSE 큐로만 전달된다."""
     krx_queue = price_stream_service.create_subscriber_queue('005930', exchange='KRX')

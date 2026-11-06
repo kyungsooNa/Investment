@@ -23,7 +23,6 @@ from typing import Dict, List, Optional
 
 from common.market_snapshot import ConclusionSnapshot, MarketSnapshot
 from repositories.stock_repository import StockRepository
-from services.notification_service import NotificationCategory, NotificationLevel
 
 
 class PriceStreamService:
@@ -181,18 +180,6 @@ class PriceStreamService:
                     f"실시간 체결가 품질 검증 실패: code={result.code or stock_code}, reason={result.reason}, "
                     f"metadata={result.metadata}"
                 )
-                if self._notification_service is not None:
-                    try:
-                        self._schedule_background_task(
-                            self._notification_service.emit,
-                            NotificationCategory.SYSTEM,
-                            NotificationLevel.ERROR,
-                            "실시간 체결가 품질 검증 실패",
-                            f"{result.code or stock_code}: {result.reason}",
-                            metadata=result.to_dict(),
-                        )
-                    except RuntimeError:
-                        pass
                 self._tick_ingest_quality_reject[stock_code] = (
                     self._tick_ingest_quality_reject.get(stock_code, 0) + 1
                 )
