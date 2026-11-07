@@ -710,11 +710,29 @@ def test_profitability_gate_excludes_force_closed_and_flagged_sold_records():
     result = evaluate_strategy_profitability_gate(records, cfg)
 
     assert result["strategies"]["S1"]["metrics"]["trade_count"] == 2
-    assert result["excluded_sold"] == {"S1": {"force_closed": 1, "data_quality_flag": 1}}
+    assert result["excluded_sold"] == {
+        "S1": {"force_closed": 1, "data_quality_flag": 1, "strategy_dry_run": 0}
+    }
 
 
 def test_profitability_gate_reports_strategy_with_only_excluded_records():
     result = evaluate_strategy_profitability_gate([_force_closed("S2")], StrategyProfitabilityGateConfig())
 
     assert "S2" not in result["strategies"]
-    assert result["excluded_sold"] == {"S2": {"force_closed": 1, "data_quality_flag": 0}}
+    assert result["excluded_sold"] == {
+        "S2": {"force_closed": 1, "data_quality_flag": 0, "strategy_dry_run": 0}
+    }
+
+
+def test_profitability_gate_excludes_scheduler_dry_run_would_be_fills():
+    """스케줄러 dry-run(#1060)은 신호가 기준 가상 체결이라 실전 진입 허용 표본에 넣지 않는다."""
+    dry_run = _sold(9000, 9.0)
+    dry_run["source"] = "strategy_dry_run"
+    paper = _sold(1000, 1.0)
+    paper["source"] = "broker_paper"
+    cfg = StrategyProfitabilityGateConfig(min_trades=1)
+
+    result = evaluate_strategy_profitability_gate([paper, _sold(2000, 2.0), dry_run], cfg)
+
+    assert result["strategies"]["S1"]["metrics"]["trade_count"] == 2
+    assert result["excluded_sold"]["S1"]["strategy_dry_run"] == 1

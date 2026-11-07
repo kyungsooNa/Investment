@@ -83,12 +83,16 @@ def test_readiness_sold_trades_match_gate_sample_exclusions(tmp_path):
     force_closed["decision_reason"] = "reconciled_force_close"
     flagged = _record("S1")
     flagged["metadata"] = {"data_quality_flag": "의심"}
+    dry_run = _record("S1")
+    dry_run["source"] = "strategy_dry_run"
 
     result = build_strategy_validation_readiness(
-        [_record("S1"), force_closed, flagged],
+        [_record("S1"), force_closed, flagged, dry_run],
         replay_dir=tmp_path,
     )
 
     row = result["strategies"][0]
     assert row["sold_trades"] == 1
-    assert row["excluded_sold"] == {"force_closed": 1, "data_quality_flag": 1}
+    assert row["excluded_sold"] == {
+        "force_closed": 1, "data_quality_flag": 1, "strategy_dry_run": 1,
+    }

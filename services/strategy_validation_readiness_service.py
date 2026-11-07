@@ -10,6 +10,7 @@ from typing import Any, Iterable, Mapping
 from services.strategy_profitability_gate_service import (
     StrategyProfitabilityGateConfig,
     evaluate_strategy_profitability_gate,
+    empty_sold_exclusion_counts,
     sold_sample_exclusion,
 )
 
@@ -65,7 +66,7 @@ def _strategy_readiness(
 ) -> dict[str, Any]:
     rows = [record for record in journal if str(record.get("strategy") or "").strip() == strategy]
     sold_rows = [record for record in rows if str(record.get("status") or "").upper() == "SOLD"]
-    excluded_sold = {"force_closed": 0, "data_quality_flag": 0}
+    excluded_sold = empty_sold_exclusion_counts()
     for record in sold_rows:
         exclusion = sold_sample_exclusion(record)
         if exclusion is not None:

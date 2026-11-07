@@ -333,3 +333,38 @@ def test_apply_real_overrides_ignores_objects_without_matching_fields():
     base = StrategyProfitabilityGateConfig()
 
     assert _apply_real_overrides(base, SimpleNamespace(무관한필드=1)) is base
+
+
+def test_live_expansion_gate_does_not_unlock_real_entries_from_dry_run_fills():
+    """같은 표본이 실체결이면 통과하지만, dry-run 가상 체결뿐이면 실전 진입을 열지 않는다 (todo 1-7)."""
+    def records(source: str) -> list[dict]:
+        rows = [_sold("S1", 100, 1.0, "2026-05-01"), _sold("S1", -20, -0.2, "2026-05-02")]
+        for row in rows:
+            row["source"] = source
+        return rows
+
+    config = StrategyProfitabilityGateConfig(
+        min_trades=2,
+        min_profit_factor=1.0,
+        min_payoff_ratio=1.0,
+        min_win_rate=0.5,
+        min_avg_net_return=0.0,
+        require_positive_total_net_pnl=True,
+        max_mdd_pct=10.0,
+        capital_base_won=1_000,
+        max_monte_carlo_ruin_probability=None,
+        max_monte_carlo_worst_mdd_pct=None,
+        require_non_negative_regime_pnl=False,
+    )
+
+    def decide(source: str):
+        return StrategyLiveExpansionGateService(
+            journal_records_provider=lambda: records(source),
+            is_paper_trading_fn=lambda: False,
+            profitability_gate_config=config,
+        ).check_strategy("S1")
+
+    assert decide("broker_paper").allowed is True
+    dry_run = decide("strategy_dry_run")
+    assert dry_run.allowed is False
+    assert dry_run.reason == "profitability_gate_missing"
