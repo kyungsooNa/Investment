@@ -28,6 +28,7 @@ ACTIVE_BACKTEST_STRATEGIES = (
     "larry_williams_vbo",
     "rsi2_pullback",
     "larry_williams_channel_breakout",
+    "minervini_stage2_transition",
 )
 
 
@@ -464,6 +465,7 @@ def _build_backtest_strategy(
     state_suffix: str = "",
     logger: logging.Logger | None = None,
     config: Any = None,
+    minervini_stage_service: Any | None = None,
 ):
     """Build an active strategy with replay data and a pinned backtest clock.
 
@@ -554,7 +556,50 @@ def _build_backtest_strategy(
             config=config,
         )
 
+    if strategy_key == "minervini_stage2_transition":
+        from strategies.minervini_stage2_transition_strategy import (
+            MinerviniStage2TransitionStrategy,
+        )
+
+        if minervini_stage_service is None:
+            # 라이브 전략은 stage service 가 없으면 경고 후 스캔을 건너뛴다 — 백테스트에서는
+            # 그 결과가 '0거래' 로 조용히 섞이므로 조립 단계에서 실패시킨다.
+            raise ValueError(f"{strategy_key} 백테스트에는 minervini_stage_service가 필요합니다.")
+        return MinerviniStage2TransitionStrategy(
+            stock_query_service=replay_sqs,
+            minervini_stage_service=minervini_stage_service,
+            market_clock=backtest_clock,
+            config=config,
+            logger=strategy_logger,
+        )
+
     raise ValueError(f"지원하지 않는 백테스트 전략입니다: {strategy_key}")
+
+
+def _build_minervini_stage_service(
+    strategy_key: str,
+    *,
+    stock_repository: Any | None,
+    replay_sqs: Any,
+) -> Any | None:
+    """Minervini 전략용 시점 고정 Stage 어댑터 (평가일 직전 거래일 daily_prices 기준).
+
+    라이브 `MinerviniStageService.get_stage2_list()` 는 최신 거래일 목록을 읽으므로
+    과거 날짜 재생에 쓰면 오늘의 Stage2 목록이 섞인다. (todo 1-8)
+    """
+    if strategy_key != "minervini_stage2_transition":
+        return None
+    if stock_repository is None:
+        raise ValueError(
+            f"{strategy_key} 백테스트에는 로컬 daily_prices 저장소(StockRepository)가 필요합니다."
+        )
+    from services.minervini_stage2_pit import BacktestMinerviniStageService
+    from services.minervini_stage_service import MinerviniStageService
+
+    return BacktestMinerviniStageService(
+        stock_repository,
+        classifier=MinerviniStageService(stock_query_service=replay_sqs),
+    )
 
 
 @dataclass(frozen=True)
@@ -1020,6 +1065,12 @@ def _build_default_strategy_config(strategy_key: str) -> Any:
         from strategies.larry_williams_cb_types import LarryWilliamsCBConfig
 
         return LarryWilliamsCBConfig()
+    if strategy_key == "minervini_stage2_transition":
+        from strategies.minervini_stage2_transition_strategy import (
+            MinerviniStage2TransitionConfig,
+        )
+
+        return MinerviniStage2TransitionConfig()
     raise ValueError(
         f"Ablation default config not defined for strategy '{strategy_key}'."
     )
@@ -1150,6 +1201,11 @@ def _resolve_ablation_preset(strategy_key: str):
             LARRY_WILLIAMS_CHANNEL_BREAKOUT_ABLATION_PRESET,
         )
         return LARRY_WILLIAMS_CHANNEL_BREAKOUT_ABLATION_PRESET
+    if strategy_key == "minervini_stage2_transition":
+        from strategies.minervini_stage2_transition_ablation import (
+            MINERVINI_STAGE2_TRANSITION_ABLATION_PRESET,
+        )
+        return MINERVINI_STAGE2_TRANSITION_ABLATION_PRESET
     raise ValueError(
         f"Ablation preset 이 정의되지 않은 전략입니다: '{strategy_key}'."
     )
@@ -1355,6 +1411,11 @@ def _resolve_parameter_stability_preset(strategy_key: str):
             LARRY_WILLIAMS_CHANNEL_BREAKOUT_PARAMETER_STABILITY_PRESET,
         )
         return LARRY_WILLIAMS_CHANNEL_BREAKOUT_PARAMETER_STABILITY_PRESET
+    if strategy_key == "minervini_stage2_transition":
+        from strategies.minervini_stage2_transition_parameter_stability import (
+            MINERVINI_STAGE2_TRANSITION_PARAMETER_STABILITY_PRESET,
+        )
+        return MINERVINI_STAGE2_TRANSITION_PARAMETER_STABILITY_PRESET
     raise ValueError(
         f"Parameter stability preset 이 정의되지 않은 전략입니다: '{strategy_key}'."
     )
@@ -1583,6 +1644,11 @@ async def _run(args: argparse.Namespace) -> None:
         microstructure_dir=args.microstructure_dir,
     )
     indicator_service = getattr(sqs, "indicator_service", None)
+    minervini_stage_service = _build_minervini_stage_service(
+        args.strategy,
+        stock_repository=_get_stock_repository(sqs),
+        replay_sqs=replay_sqs,
+    )
     # 라이브 StrategyScheduler 의 마켓타이밍 진입 게이트를 백테스트에서도 적용한다.
     # (#766 이 게이트를 전략 → 스케줄러로 옮겨 백테스트 경로에서 사라졌다.)
     market_regime_service = getattr(universe_service, "_regime_svc", None)
@@ -1643,6 +1709,7 @@ async def _run(args: argparse.Namespace) -> None:
                 state_suffix=state_suffix,
                 logger=logging.getLogger(f"backtest.{args.strategy}"),
                 config=variant_config,
+                minervini_stage_service=minervini_stage_service,
             )
             max_positions = (
                 {strategy.name: args.max_positions}
@@ -1694,7 +1761,11 @@ async def _run(args: argparse.Namespace) -> None:
                 ),
                 position_sizing_service=risk_sizing.position_sizing_service,
                 risk_gate_service=risk_sizing.risk_gate_service,
-                date_context_targets=[backtest_clock, replay_sqs],
+                date_context_targets=[
+                    target
+                    for target in (backtest_clock, replay_sqs, minervini_stage_service)
+                    if target is not None
+                ],
                 mtm_bar_provider=mtm_bar_provider,
                 market_regime_service=market_regime_service,
                 market_resolver=market_resolver,

@@ -9,7 +9,12 @@ from services.backtest_microstructure_quality import (
     format_optional_pct,
     summarize_capture_quality,
 )
+from services.minervini_stage2_pit import load_pit_stage2_items
 from services.notification_service import NotificationCategory, NotificationLevel
+from strategies.minervini_stage2_transition_strategy import (
+    MinerviniStage2TransitionConfig,
+    select_stage2_candidates,
+)
 from task.background.after_market.after_market_task_base import AfterMarketTask
 from task.background.capture_candidates import (
     price_observed_state_key,
@@ -43,6 +48,7 @@ class MicrostructureCaptureTask(AfterMarketTask):
         notification_service=None,
         quality_retry_attempts: int = 1,
         quality_retry_delay_sec: float = 15 * 60,
+        stage2_stock_repository=None,
     ):
         super().__init__(
             mcs=market_calendar_service,
@@ -59,6 +65,7 @@ class MicrostructureCaptureTask(AfterMarketTask):
         self._execution_strength_db_path = Path(execution_strength_db_path)
         self._orderbook_db_path = Path(orderbook_db_path)
         self._max_codes = max_codes
+        self._stage2_stock_repository = stage2_stock_repository
         self._notification_service = notification_service
         self._quality_retry_attempts = max(0, int(quality_retry_attempts))
         self._quality_retry_delay_sec = max(0.0, float(quality_retry_delay_sec))
@@ -139,9 +146,11 @@ class MicrostructureCaptureTask(AfterMarketTask):
         except Exception as exc:
             self._logger.warning(f"{self.task_name}: 마지막 캡처 날짜 저장 실패 — {exc}")
 
-    async def _resolve_codes(self) -> tuple[list[str], dict[str, list[str]]]:
+    async def _resolve_codes(
+        self, latest_trading_date: str
+    ) -> tuple[list[str], dict[str, list[str]]]:
         """캡처 대상 종목: 보유 종목 우선 + Pool B 워치리스트, 중복 제거 후 cap + 소스 구분."""
-        return await resolve_capture_codes_with_sources(
+        codes, sources = await resolve_capture_codes_with_sources(
             virtual_trade_service=self._virtual_trade_service,
             universe_service=self._universe_service,
             stock_query_service=self._stock_query_service,
@@ -149,6 +158,31 @@ class MicrostructureCaptureTask(AfterMarketTask):
             logger=self._logger,
             task_name=self.task_name,
         )
+        if self._stage2_stock_repository is None:
+            return codes, sources
+        stage2_codes = [
+            code for code in await self._resolve_stage2_codes(latest_trading_date)
+            if code not in codes
+        ]
+        sources["minervini_stage2"] = stage2_codes
+        return codes + stage2_codes, sources
+
+    async def _resolve_stage2_codes(self, latest_trading_date: str) -> list[str]:
+        """Minervini Stage2 전환 전략이 당일 장중에 스캔한 후보 (todo 1-8).
+
+        라이브 전략은 직전 거래일 장마감 Stage2 목록을 스캔하므로 같은 시점 목록과
+        같은 선별 함수를 쓴다. 이 보충분은 max_codes cap 밖이라 기존 코퍼스 폭을
+        잠식하지 않고, 품질 게이트 분모에서도 빠진다.
+        """
+        try:
+            _, items = await load_pit_stage2_items(
+                self._stage2_stock_repository, latest_trading_date
+            )
+        except Exception as exc:
+            self._logger.warning(f"{self.task_name}: Minervini Stage2 후보 조회 실패 — {exc}")
+            return []
+        selected = select_stage2_candidates(items, MinerviniStage2TransitionConfig())
+        return [str(item["code"]) for item in selected]
 
     async def _on_market_closed(self, latest_trading_date: str) -> None:
         if not latest_trading_date:
@@ -158,7 +192,7 @@ class MicrostructureCaptureTask(AfterMarketTask):
                 f"{self.task_name}: {latest_trading_date} 이미 캡처됨 — skip"
             )
             return
-        codes, candidate_sources = await self._resolve_codes()
+        codes, candidate_sources = await self._resolve_codes(latest_trading_date)
         if not codes:
             # 날짜를 저장하지 않아 이후 재실행(예: force) 시 재시도 여지를 남긴다.
             self._logger.warning(f"{self.task_name}: 캡처 대상 종목 없음 — skip")

@@ -712,3 +712,57 @@ async def test_candidate_sources_passed_to_capture_and_counts_exposed(
     }
     last_result = task.get_progress()["last_result"]
     assert last_result["candidate_source_counts"] == {"base": 2, "ranking_supplement": 1}
+
+
+def _stage2_repo(rows, previous_date="20260701"):
+    repo = MagicMock()
+    repo.get_latest_trade_date_before = AsyncMock(return_value=previous_date)
+    repo.get_minervini_stage2_stocks = AsyncMock(return_value=rows)
+    return repo
+
+
+@pytest.mark.asyncio
+async def test_minervini_stage2_candidates_added_as_separate_uncapped_source(
+    capture_service, universe_service, tmp_path
+):
+    # 직전 거래일 Stage2 목록 중 전략 스캔 필터(RS·시총)를 통과한 종목을 별도 소스로 보충한다.
+    # base 와 겹치는 종목은 base 로 귀속하고, 기존 max_codes cap 을 잠식하지 않는다. (todo 1-8)
+    repo = _stage2_repo([
+        {"code": "005930", "minervini_stage": 2, "rs_rating": 95, "market_cap": 40_000},
+        {"code": "111111", "minervini_stage": 2, "rs_rating": 90, "market_cap": 40_000},
+        {"code": "222222", "minervini_stage": 2, "rs_rating": 70, "market_cap": 40_000},
+    ])
+    task = _make_task(
+        capture_service, tmp_path,
+        universe_service=universe_service,
+        stage2_stock_repository=repo,
+        max_codes=2,
+    )
+
+    await task._on_market_closed("20260702")
+
+    repo.get_latest_trade_date_before.assert_awaited_once_with("20260702")
+    repo.get_minervini_stage2_stocks.assert_awaited_once_with("20260701")
+    kwargs = capture_service.capture.await_args.kwargs
+    assert kwargs["codes"] == ["005930", "000660", "111111"]
+    assert kwargs["candidate_sources"]["base"] == ["005930", "000660"]
+    assert kwargs["candidate_sources"]["minervini_stage2"] == ["111111"]
+
+
+@pytest.mark.asyncio
+async def test_minervini_stage2_lookup_failure_keeps_base_capture(
+    capture_service, universe_service, tmp_path
+):
+    repo = _stage2_repo([])
+    repo.get_latest_trade_date_before = AsyncMock(side_effect=RuntimeError("db locked"))
+    task = _make_task(
+        capture_service, tmp_path,
+        universe_service=universe_service,
+        stage2_stock_repository=repo,
+    )
+
+    await task._on_market_closed("20260702")
+
+    kwargs = capture_service.capture.await_args.kwargs
+    assert kwargs["codes"] == ["005930", "000660"]
+    assert kwargs["candidate_sources"]["minervini_stage2"] == []

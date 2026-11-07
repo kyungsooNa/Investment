@@ -276,3 +276,55 @@ def test_time_series_coverage_fails_below_fifty_percent_hard_floor():
     assert "execution_strength_db_coverage_below_threshold" in summary["issues"]
     assert "orderbook_db_coverage_below_threshold" in summary["issues"]
     assert summary["quality_gate_passed"] is False
+
+
+def test_minervini_stage2_supplement_codes_do_not_dilute_microstructure_gate():
+    """일봉 신호 전략 보충 종목은 수급 오버레이가 없어도 기존 코퍼스 게이트를 깨지 않는다 (todo 1-8)."""
+    payload = {
+        "metadata": {
+            "trade_date": "20261106",
+            "codes": ["000001", "000002", "900001", "900002", "900003"],
+            "candidate_sources": {
+                "base": ["000001"],
+                "ranking_supplement": ["000002"],
+                "minervini_stage2": ["900001", "900002", "900003"],
+            },
+            "program_source": "program_db",
+            "program_fallback_codes": [],
+        },
+        "intraday_minutes": {code: [{}] for code in ["000001", "000002", "900001", "900002", "900003"]},
+        "execution_strength": {"000001": 120.0, "000002": 121.0},
+        "program_trades": {
+            "000001": {"program_net_buy_qty": 10},
+            "000002": {"program_net_buy_qty": 20},
+        },
+        "program_trades_intraday": {
+            "000001": [{"time": "100000", "program_net_buy_qty": 10}],
+            "000002": [{"time": "100000", "program_net_buy_qty": 20}],
+        },
+    }
+
+    summary = summarize_capture_quality(payload)
+
+    assert summary["codes"] == 2
+    assert summary["daily_signal_only_codes"] == 3
+    assert summary["program_overlay_coverage_pct"] == pytest.approx(100.0)
+    assert summary["program_intraday_db_coverage_pct"] == pytest.approx(100.0)
+    assert summary["quality_gate_passed"] is True
+
+
+def test_minervini_stage2_code_shared_with_base_stays_in_gate():
+    payload = {
+        "metadata": {
+            "trade_date": "20261106",
+            "codes": ["000001"],
+            "candidate_sources": {"base": ["000001"], "minervini_stage2": []},
+        },
+        "intraday_minutes": {"000001": [{}]},
+        "program_trades": {"000001": {"program_net_buy_qty": 1}},
+    }
+
+    summary = summarize_capture_quality(payload)
+
+    assert summary["codes"] == 1
+    assert summary["daily_signal_only_codes"] == 0

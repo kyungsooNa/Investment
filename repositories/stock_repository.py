@@ -156,6 +156,10 @@ class StockRepository:
         """daily_prices에 저장된 가장 최근 거래일 반환."""
         return await self._ohlcv_repo.get_latest_trade_date()
 
+    async def get_latest_trade_date_before(self, trade_date: str) -> Optional[str]:
+        """기준일 직전(미포함) daily_prices 거래일 반환."""
+        return await self._ohlcv_repo.get_latest_trade_date_before(trade_date)
+
     async def get_count_by_date(self, trade_date: str) -> int:
         """특정 날짜에 저장된 종목 수 반환."""
         return await self._ohlcv_repo.get_count_by_date(trade_date)

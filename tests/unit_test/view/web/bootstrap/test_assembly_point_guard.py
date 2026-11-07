@@ -29,7 +29,8 @@ BOOTSTRAP_DIR = SERVICE_CONTAINER.parent
 
 # 2026-08-23 실측: services+task import 53개 / 936줄.
 MAX_ASSEMBLY_IMPORTS = 56
-MAX_LINES = 980
+# 2026-11-07: 기존 캡처 태스크에 kwarg 1줄(todo 1-8 Stage2 후보 보충) — 서비스군 추가가 아니라 +1.
+MAX_LINES = 981
 
 # 모듈별 예산 (줄수, services/task import 수). 2026-09-17 실측에 여유를 얹은 값이다.
 # 새 bootstrap 모듈을 만들면 여기에 등록해야 한다 — 등록하지 않으면 아래
