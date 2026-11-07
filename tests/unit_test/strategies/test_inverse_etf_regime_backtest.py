@@ -10,14 +10,15 @@ from strategies.inverse_etf_regime_backtest import InverseEtfRegimeBacktest
 
 
 def _bars(closes, *, highs=None, lows=None, opens=None, start_day=1):
-    """오름차순 일봉 리스트 생성. 기본은 시가=고가=저가=종가(갭/스파이크 없음)."""
+    """오름차순 일봉 리스트 생성. 기본은 장중 상승 확인이 된 작은 양봉이다."""
     out = []
     for k, c in enumerate(closes):
+        default_open = c - 1
         out.append({
             "date": f"2022-01-{start_day + k:02d}",
-            "open": (opens[k] if opens else c),
+            "open": (opens[k] if opens else default_open),
             "high": (highs[k] if highs else c),
-            "low": (lows[k] if lows else c),
+            "low": (lows[k] if lows else default_open),
             "close": c,
         })
     return out
@@ -63,6 +64,30 @@ def test_entry_when_bear_and_inverse_uptrend():
     assert result["trades"][0]["entry_price"] > 0
 
 
+def test_no_entry_without_intraday_trend_confirmation():
+    """일봉 상승추세여도 종가가 시가 이하면 최신 라이브 진입 조건상 거부한다."""
+    bt = InverseEtfRegimeBacktest(trend_ma_period=5, regime_ma_period=5)
+    closes = [5000.0 + 50 * k for k in range(12)]
+    inverse = _bars(closes, opens=[close + 10 for close in closes])
+
+    result = bt.run(_down_index(n=12), inverse)
+
+    assert result["summary"]["total_trades"] == 0
+
+
+def test_no_entry_without_positive_previous_day_return():
+    """종가가 시가보다 높아도 전일 대비 상승이 아니면 진입하지 않는다."""
+    bt = InverseEtfRegimeBacktest(trend_ma_period=3, regime_ma_period=3)
+    inverse = _bars(
+        [5000, 5050, 5100, 5100],
+        opens=[4990, 5040, 5090, 5090],
+    )
+
+    result = bt.run(_down_index(n=4), inverse)
+
+    assert result["summary"]["total_trades"] == 0
+
+
 # ── 청산 ──────────────────────────────────────────────────────────
 
 def test_exit_on_regime_flip_to_non_bear():
@@ -76,6 +101,47 @@ def test_exit_on_regime_flip_to_non_bear():
     assert "regime" in reasons
 
 
+def test_regime_exit_has_priority_over_same_day_stop():
+    """라이브와 같이 레짐 해제를 같은 날의 가격 스탑보다 먼저 판정한다."""
+    bt = InverseEtfRegimeBacktest(
+        stop_loss_pct=-5.0,
+        trailing_stop_pct=None,
+        trend_ma_period=3,
+        regime_ma_period=3,
+    )
+    index = _bars([10000, 9900, 9800, 9700, 9600, 11000])
+    inverse = _bars(
+        [5000, 5050, 5100, 5150, 5200, 4900],
+        opens=[5000, 5050, 5100, 5150, 5190, 4900],
+        lows=[5000, 5050, 5100, 5150, 5200, 4800],
+    )
+
+    trade = bt.run(index, inverse)["trades"][0]
+
+    assert trade["exit_reason"] == "regime"
+    assert trade["exit_price"] == 4900
+
+
+def test_exit_on_intraday_trend_invalidation():
+    """시가 아래이면서 전일 대비 -2% 이하이면 최신 라이브 로직대로 조기 청산한다."""
+    bt = InverseEtfRegimeBacktest(
+        stop_loss_pct=-20.0,
+        trailing_stop_pct=None,
+        trend_ma_period=5,
+        regime_ma_period=5,
+    )
+    index = _down_index(n=8)
+    inverse = _bars(
+        [5000, 5050, 5100, 5150, 5200, 5250, 5100, 5150],
+        opens=[5000, 5050, 5100, 5150, 5200, 5200, 5300, 5100],
+    )
+
+    trade = bt.run(index, inverse)["trades"][0]
+
+    assert trade["exit_reason"] == "intraday_invalidation"
+    assert trade["exit_price"] == 5100
+
+
 def test_exit_on_hard_stop_with_gap_through():
     """하드 스탑: 저가가 스탑 이하로 갭다운하면 시가에 체결(보수)."""
     bt = InverseEtfRegimeBacktest(stop_loss_pct=-5.0, trend_ma_period=5, regime_ma_period=5)
@@ -85,7 +151,7 @@ def test_exit_on_hard_stop_with_gap_through():
     entry_close = inv_closes[-1]
     # 다음 봉 갭다운: 시가 4000(=entry*0.8), 저가 3900
     inv_closes += [4000.0]
-    opens = inv_closes[:-1] + [4000.0]
+    opens = [close - 1 for close in inv_closes[:-1]] + [4000.0]
     lows = inv_closes[:-1] + [3900.0]
     highs = inv_closes[:]
     inverse = _bars(inv_closes, opens=opens, lows=lows, highs=highs)
@@ -94,6 +160,28 @@ def test_exit_on_hard_stop_with_gap_through():
     assert stop_trades
     # 갭다운이므로 스탑가(entry*0.95)가 아니라 시가(4000)에 체결
     assert abs(stop_trades[0]["exit_price"] - 4000.0) < 1e-6
+
+
+def test_hard_stop_threshold_uses_net_return_after_cost():
+    """라이브와 같이 비용 차감 후 -5%가 되는 가격에서 손절한다."""
+    bt = InverseEtfRegimeBacktest(
+        stop_loss_pct=-5.0,
+        trailing_stop_pct=None,
+        trend_ma_period=3,
+        regime_ma_period=3,
+        round_trip_cost_pct=0.1,
+    )
+    index = _down_index(n=6)
+    inverse = _bars(
+        [5000, 5050, 5100, 5150, 5150, 5150],
+        opens=[4990, 5040, 5090, 5140, 5140, 5140],
+        lows=[4990, 5040, 5090, 5140, 4895, 5140],
+    )
+
+    trade = bt.run(index, inverse)["trades"][0]
+
+    assert trade["exit_reason"] == "stop"
+    assert trade["net_return_pct"] == pytest.approx(-5.0)
 
 
 def test_exit_on_trailing_stop():

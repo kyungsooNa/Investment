@@ -10,14 +10,17 @@
   라이브는 `MarketRegimeService`(hard_decline 판정)를 쓰지만, 백테스트는 동일 의도의
   MA-크로스+하락기울기 proxy로 단순화한다(외부 의존 없이 재현 가능).
 
-진입: 해당일 지수 bear **AND** 인버스 종가 > 인버스 trend_ma_period MA → 종가 진입.
+진입: 해당일 지수 bear **AND** 인버스 종가 > 인버스 trend_ma_period MA
+  **AND** 종가 > 시가 **AND** 전일 대비 상승 → 종가 진입.
+  라이브의 실제 매도 1호가는 과거 일봉에 없으므로 종가로 근사하며, 슬리피지는 비용에 포함한다.
 
-청산(우선순위 — 일중 가격 기반이 종가 레짐보다 선행):
-  (1) hard stop  — 저가 ≤ 진입가×(1+stop/100). gap-through: 시가가 stop 아래면 시가 체결.
-  (2) trailing   — 고점×(1−trailing/100) 하향 이탈(이익 구간에서만).
-  (3) regime     — 종가 시점 지수가 bear 이탈 → 종가 청산.
-  (4) partial    — 목표 수익률 도달 시 지정 비율 1회 익절.
-  (5) terminal   — 데이터 끝까지 보유 시 마지막 봉 종가 청산.
+청산(라이브 우선순위):
+  (1) regime     — 종가 시점 지수가 bear 이탈 → 종가 청산.
+  (2) hard stop  — 저가가 비용 반영 net 손절선 이하. gap-through: 시가 체결.
+  (3) intraday   — 종가 < 시가이면서 전일 대비 intraday_invalidation_pct 이하 → 종가 청산.
+  (4) trailing   — 고점×(1−trailing/100) 하향 이탈(이익 구간에서만).
+  (5) partial    — 비용 반영 목표 순수익률 도달 시 지정 비율 1회 익절.
+  (6) terminal   — 데이터 끝까지 보유 시 마지막 봉 종가 청산.
 
 비용: **ETF는 증권거래세(0.2%) 비과세** → round_trip_cost_pct 기본값은 위탁수수료
 +슬리피지만 반영한 소액(0.1%)으로, 주식 round-trip(0.2%, 거래세 포함)보다 작다.
@@ -32,6 +35,7 @@ class InverseEtfRegimeBacktest:
         regime_ma_period: int = 20,
         trend_ma_period: int = 20,
         stop_loss_pct: float = -5.0,
+        intraday_invalidation_pct: float = -2.0,
         trailing_stop_pct: Optional[float] = 8.0,
         take_profit_pct: Optional[float] = 12.0,
         partial_sell_ratio: float = 0.5,
@@ -41,6 +45,7 @@ class InverseEtfRegimeBacktest:
         self._regime_ma_period = int(regime_ma_period)
         self._trend_ma_period = int(trend_ma_period)
         self._stop_loss_pct = float(stop_loss_pct)
+        self._intraday_invalidation_pct = float(intraday_invalidation_pct)
         self._trailing_stop_pct = trailing_stop_pct
         self._take_profit_pct = take_profit_pct
         self._partial_sell_ratio = float(partial_sell_ratio)
@@ -61,14 +66,25 @@ class InverseEtfRegimeBacktest:
         while i < n:
             date_i = inv[i].get("date")
             close_i = self._f(inv[i].get("close"))
+            open_i = self._f(inv[i].get("open"))
+            prev_close_i = self._f(inv[i - 1].get("close")) if i > 0 else 0.0
             ma_i = inv_ma.get(date_i)
-            # 진입 게이트: 지수 bear + 인버스 추세 확인
-            if not bear_by_date.get(date_i, False) or ma_i is None or close_i <= ma_i or close_i <= 0:
+            # 진입 게이트: 지수 bear + 인버스 일봉/장중 추세 확인
+            if (
+                not bear_by_date.get(date_i, False)
+                or ma_i is None
+                or close_i <= ma_i
+                or close_i <= open_i
+                or prev_close_i <= 0
+                or close_i <= prev_close_i
+            ):
                 i += 1
                 continue
 
             entry_price = close_i
-            stop_price = entry_price * (1 + self._stop_loss_pct / 100.0)
+            # 라이브는 net PnL로 손절하므로 고정 round-trip 비용을 가격 임계값에 역반영한다.
+            stop_gross_pct = self._stop_loss_pct + self.round_trip_cost_pct
+            stop_price = entry_price * (1 + stop_gross_pct / 100.0)
             peak = entry_price
             exit_price: Optional[float] = None
             exit_reason: Optional[str] = None
@@ -86,15 +102,33 @@ class InverseEtfRegimeBacktest:
                 h = self._f(inv[j].get("high"))
                 low = self._f(inv[j].get("low"))
                 c = self._f(inv[j].get("close"))
+                prev_close = self._f(inv[j - 1].get("close")) if j > 0 else 0.0
+                change_pct = ((c / prev_close) - 1) * 100 if prev_close > 0 else 0.0
 
-                # (1) hard stop — gap-through 시 시가 체결
+                # (1) regime flip — 라이브와 같이 다른 가격 청산보다 우선
+                if not bear_by_date.get(inv[j].get("date"), False):
+                    exit_price, exit_reason, exit_idx = c, "regime", j
+                    realized_gross += remaining_fraction * (exit_price / entry_price - 1)
+                    break
+
+                # (2) hard stop — gap-through 시 시가 체결
                 if low <= stop_price:
                     exit_price = o if (0 < o < stop_price) else stop_price
                     exit_reason, exit_idx = "stop", j
                     realized_gross += remaining_fraction * (exit_price / entry_price - 1)
                     break
 
-                # (2) trailing stop — 이익 구간에서만(trail이 hard stop 위일 때)
+                # (3) 장중 추세 무효화 — 라이브 현재가를 일봉 종가로 근사
+                if (
+                    o > 0
+                    and c < o
+                    and change_pct <= self._intraday_invalidation_pct
+                ):
+                    exit_price, exit_reason, exit_idx = c, "intraday_invalidation", j
+                    realized_gross += remaining_fraction * (exit_price / entry_price - 1)
+                    break
+
+                # (4) trailing stop — 이익 구간에서만(trail이 hard stop 위일 때)
                 if h > peak:
                     peak = h
                 if self._trailing_stop_pct:
@@ -105,15 +139,10 @@ class InverseEtfRegimeBacktest:
                         realized_gross += remaining_fraction * (exit_price / entry_price - 1)
                         break
 
-                # (3) regime flip — 종가 시점 bear 이탈
-                if not bear_by_date.get(inv[j].get("date"), False):
-                    exit_price, exit_reason, exit_idx = c, "regime", j
-                    realized_gross += remaining_fraction * (exit_price / entry_price - 1)
-                    break
-
-                # (4) 목표 수익률 도달 시 1회 부분익절
+                # (5) 목표 순수익률 도달 시 1회 부분익절
                 if self._take_profit_pct is not None and partial_exit_price is None:
-                    target_price = entry_price * (1 + float(self._take_profit_pct) / 100.0)
+                    target_gross_pct = float(self._take_profit_pct) + self.round_trip_cost_pct
+                    target_price = entry_price * (1 + target_gross_pct / 100.0)
                     if h >= target_price:
                         fraction = min(max(self._partial_sell_ratio, 0.0), 1.0)
                         if fraction > 0:
@@ -127,7 +156,7 @@ class InverseEtfRegimeBacktest:
                                 break
                 j += 1
 
-            # (5) terminal — 미청산 시 마지막 봉 종가 강제청산
+            # (6) terminal — 미청산 시 마지막 봉 종가 강제청산
             if exit_price is None:
                 exit_price = self._f(inv[n - 1].get("close"))
                 exit_reason, exit_idx = "terminal", n - 1
