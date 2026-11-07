@@ -192,7 +192,7 @@
   - 표준 journal 축적 현황 리포트 추가 (2026-07-04): 일일 전략 리포트에 source별 레코드 수, SOLD/진행중 status, 전략별 SOLD 표본 진행률(`min_trades` 대비)을 노출해 paper/canary 데이터가 gate 해제 기준까지 얼마나 쌓였는지 확인 가능.
   - 전략명 별칭 통합 (2026-07-09): 2026-05-26경 기록 전략명이 표시명→ID로 전환되며 표본이 두 표기로 갈라져 있던 것을 `normalize_virtual_trade` read-time 별칭 매핑으로 통합(래리윌리엄스VBO→larry_williams_vbo 등 4쌍, DB 불변). 통합 후 실측 진행률: VBO SOLD 34/100, RSI2 14, CB 4 — 7월은 마켓타이밍 차단으로 +3건뿐(설계된 정체). regime 태그는 62건 중 53건 null(태깅 도입 전)이라 regime별 최소 30은 사실상 신규 축적 필요.
   - **2026-10-26 재집계**: 전체 458건/SOLD 218건 중 강제종결 21건을 제외한 게이트 표본은 197건이다. VBO는 인정 SOLD 155건으로 최소 100건은 넘었지만 PF 0.709, payoff 1.054, 평균 순수익 -0.065%, 총 순손익 -797,056원이라 fail이다. 나머지 전략은 모두 16건 이하로 표본 부족이다. 모든 레코드의 source가 `virtual_trade`라 shadow/paper/canary 단계별 분리는 아직 불가능하다. (`reports/profitability_gate_snapshot_20261026.md`)
-  - 신규 국내 broker 체결의 실행 환경 구분 추가 (2026-10-26): 매수 체결 시 `broker_paper`/`broker_live`를 원장에 영속화하고 표준 journal `source`로 노출한다. 과거 행은 소급 추정하지 않고 `virtual_trade`로 유지하며, `broker_live`를 canary로 간주하지 않는다. shadow와 canary 단계의 별도 식별은 후속 과제다.
+  - 신규 국내 broker 체결의 실행 환경 구분 추가 (2026-10-26): 매수 체결 시 `broker_paper`/`broker_live`를 원장에 영속화하고 표준 journal `source`로 노출한다. 과거 행은 소급 추정하지 않고 `virtual_trade`로 유지하며, `broker_live`를 canary로 간주하지 않는다. shadow와 canary 단계의 별도 식별은 아래 10-27 두 항목(`broker_canary` 등 운영 프로필 · `event_shadow` 통합)으로 해소됐다(2026-11-07 코드 확인).
   - 국내 실계좌 운영 프로필 구분 추가 (2026-10-27): 신규 매수 체결을 `broker_canary`/`broker_real_limited`/`broker_real_full`로 기록한다. paper는 `broker_paper`, 프로필을 알 수 없는 레거시 조립 경로는 `broker_live`로 유지한다. 과거 행은 변경하지 않는다.
   - event shadow 표준 journal 통합 (2026-10-27): `logs/strategies/event_shadow/*.jsonl`의 진입·청산 관찰 신호를 각각 `event_shadow`/`event_shadow_exit`, `status=SIGNAL`로 정규화해 일일 리포트의 source별 축적 현황에 합친다. 틱마다 반복된 동일 신호는 거래일·source·전략·종목·action 기준 첫 관찰만 세고 status/health 레코드는 제외한다. shadow 청산은 실제 polling 보유 포지션을 관찰한 신호라 독립적인 가상 체결 쌍이 아니므로 PnL을 만들거나 profitability gate 표본에 넣지 않는다.
   - 국내 전략 dry-run 원장 구분 추가 (2026-10-29): 스케줄러 dry-run 매수는 `journal_source=strategy_dry_run`으로 영속화해 기존 수동 가상매매(`virtual_trade`)와 분리한다. 매도는 원래 매수 행을 갱신하므로 동일 source를 유지하며, 표준 journal·일일 리포트는 기존 source 집계를 그대로 사용한다.
@@ -206,6 +206,7 @@
 
 - [~] formal PBO/DSR의 profitability gate **hard 적용 정책** 결정 — PBO/adjusted-Sharpe hard gate 옵션과 real-mode overlay(`require_multiple_testing_adjustment=True`, `multiple_testing_max_pbo_probability=0.5`)는 구현됨. DSR hard threshold만 미정 → canary 성과 축적 후 enforce 기준 확정.
 - [ ] 전략 수·필터 조합 증가 시 canary 통과 기준과 자금 확대 기준 분리(자금 확대 = formal 검증 + 실전 성과 + regime 일관성).
+  - **2026-11-07 코드 확인 — 판단 재료**: 단계 라벨은 갖춰졌지만(`virtual_trade`/`strategy_dry_run`/`broker_paper`/`broker_canary`/`broker_real_*`, shadow 는 `status=SIGNAL` 이라 SOLD 표본에서 자연 제외) **gate 는 source 를 보지 않는다**. `StrategyLiveExpansionGateService`(실전 모드 신규 진입 허용 판정)와 일일 리포트가 모든 source 의 SOLD 를 한 표본으로 합친다. 따라서 ① 스케줄러 dry-run(#1060, 신호가 기준 가상 체결)의 would-be 체결만으로 실전 진입이 열릴 수 있고 ② "자금 확대 = 실전 성과" 를 판정하려 해도 canary·real 체결 표본을 따로 셀 수단이 없다. 어떤 source 를 어느 판정(진입 허용 / 자금 확대)에 넣을지가 이 항목의 정책 결정이다. 코드 변경은 결정 후 착수.
 - 우선순위 낮음: purged K-fold 별도 CV 러너(walk-forward+embargo·CSCV embargo로 실질 커버).
 
 주요 파일: `services/multiple_testing_bias_service.py`, `services/strategy_ablation_service.py`, `scripts/run_backtest.py`
