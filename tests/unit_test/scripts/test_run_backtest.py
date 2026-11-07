@@ -311,6 +311,7 @@ def test_build_backtest_strategy_injects_replay_context_for_active_strategies(
     universe_service = MagicMock(name="universe_service")
     indicator_service = MagicMock(name="indicator_service")
     backtest_clock = MagicMock(name="backtest_clock")
+    minervini_stage_service = MagicMock(name="minervini_stage_service")
 
     strategy = _build_backtest_strategy(
         strategy_key=strategy_key,
@@ -320,6 +321,7 @@ def test_build_backtest_strategy_injects_replay_context_for_active_strategies(
         backtest_clock=backtest_clock,
         state_dir=str(tmp_path),
         logger=logging.getLogger("test.backtest_strategy_factory"),
+        minervini_stage_service=minervini_stage_service,
     )
 
     assert strategy._sqs is replay_sqs
@@ -330,6 +332,54 @@ def test_build_backtest_strategy_injects_replay_context_for_active_strategies(
     if hasattr(strategy, "STATE_FILE"):
         assert str(tmp_path) in strategy.STATE_FILE
         assert strategy_key in strategy.STATE_FILE
+
+
+def test_minervini_stage2_transition_is_an_active_backtest_strategy():
+    # 라이브 스케줄러에 등록된 전략이 검증 캠페인에서 빠지지 않게 한다 (todo 1-8).
+    assert "minervini_stage2_transition" in ACTIVE_BACKTEST_STRATEGIES
+
+
+def test_build_minervini_backtest_strategy_uses_point_in_time_stage_service(tmp_path):
+    stage_service = MagicMock(name="pit_stage_service")
+
+    strategy = _build_backtest_strategy(
+        strategy_key="minervini_stage2_transition",
+        replay_sqs=MagicMock(),
+        universe_service=MagicMock(),
+        indicator_service=None,
+        backtest_clock=MagicMock(),
+        state_dir=str(tmp_path),
+        minervini_stage_service=stage_service,
+    )
+
+    assert strategy._stage_service is stage_service
+
+
+def test_build_minervini_backtest_strategy_requires_stage_service(tmp_path):
+    # 없으면 라이브 전략은 경고 후 스캔을 건너뛰어 '0거래' 로 조용히 끝난다 — 백테스트에서는 실패시킨다.
+    with pytest.raises(ValueError, match="minervini_stage_service"):
+        _build_backtest_strategy(
+            strategy_key="minervini_stage2_transition",
+            replay_sqs=MagicMock(),
+            universe_service=MagicMock(),
+            indicator_service=None,
+            backtest_clock=MagicMock(),
+            state_dir=str(tmp_path),
+        )
+
+
+def test_build_minervini_stage_service_for_backtest_needs_local_repository():
+    with pytest.raises(ValueError, match="daily_prices"):
+        run_backtest._build_minervini_stage_service(
+            "minervini_stage2_transition", stock_repository=None, replay_sqs=MagicMock()
+        )
+    assert run_backtest._build_minervini_stage_service(
+        "rsi2_pullback", stock_repository=None, replay_sqs=MagicMock()
+    ) is None
+    service = run_backtest._build_minervini_stage_service(
+        "minervini_stage2_transition", stock_repository=MagicMock(), replay_sqs=MagicMock()
+    )
+    assert callable(service.set_backtest_date)
 
 
 def test_build_backtest_strategy_requires_indicator_service_for_indicator_strategies(

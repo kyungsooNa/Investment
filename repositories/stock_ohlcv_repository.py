@@ -779,6 +779,20 @@ class StockOhlcvRepository:
             self._logger.error(f"StockOhlcvRepository daily_prices 최근 거래일 조회 실패: {e}")
             return None
 
+    async def get_latest_trade_date_before(self, trade_date: str) -> Optional[str]:
+        """기준일 직전(미포함) daily_prices 거래일 — 백테스트·캡처 point-in-time 조회용."""
+        try:
+            async with self._get_read_connection() as conn:
+                async with conn.execute(
+                    "SELECT MAX(trade_date) FROM daily_prices WHERE trade_date < ?",
+                    (trade_date,),
+                ) as cursor:
+                    row = await cursor.fetchone()
+                return row[0] if row and row[0] else None
+        except Exception as e:
+            self._logger.error(f"StockOhlcvRepository 직전 거래일 조회 실패: {e}")
+            return None
+
     async def get_count_by_date(self, trade_date: str) -> int:
         """특정 날짜에 저장된 종목 수 반환."""
         try:

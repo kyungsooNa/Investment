@@ -474,6 +474,19 @@ def test_service_container_creates_query_and_order_services(patched_service_cont
     )
 
 
+def test_microstructure_capture_receives_stock_repository_for_stage2_pit(
+    patched_service_container_deps,
+):
+    """캡처 태스크가 직전 거래일 Stage2 후보를 보충하도록 저장소를 받는다 (todo 1-8)."""
+    from view.web.bootstrap.service_container import ServiceContainer
+
+    ctx = _make_fake_context()
+    ServiceContainer(ctx).run()
+
+    kwargs = patched_service_container_deps["MicrostructureCaptureTask"].call_args.kwargs
+    assert kwargs["stage2_stock_repository"] is ctx.stock_repository
+
+
 def test_service_container_creates_theme_leader_service(patched_service_container_deps):
     """ThemeLeaderService, ThemeDailyLeaderService 와 분류 저장소가 ctx 에 주입된다."""
     from view.web.bootstrap.service_container import ServiceContainer

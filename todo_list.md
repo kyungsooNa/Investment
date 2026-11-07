@@ -47,7 +47,7 @@
 3. **[확대·전환 전 필수 게이트]**
    - 0-1 실전 체결필드 fixture · 2-2 KIS 유량 한도 실측 (실전 전환 직전, 외부 의존)
 4. **[데이터·정책 대기]**
-   - 1-8 백테스트 재실행 (**2026-11-07 현재: 새 PIT 프로그램매매 계약 기준 유효 캡처 5/30 — 축적만 남음**. 진단 계측·replay 배선은 10-25 완료. 유일한 코드측 결정은 Minervini Stage2 편입 여부, 1-8 항목 참조)
+   - 1-8 백테스트 재실행 (**2026-11-07 현재: 새 PIT 프로그램매매 계약 기준 유효 캡처 5/30 — 축적만 남음**. 진단 계측·replay 배선은 10-25 완료. Minervini Stage2 는 11-07 검증 경로 편입 완료 — 유효일은 배포 후 캡처부터)
    - 1-7 DSR hard threshold (canary 데이터 후) · R-2 Phase 4 (베어 paper 데이터 후) · 해외 Phase 5 (**안전장치는 #934/#935 로 완료 — 남은 것은 엣지 입증과 canary 배선뿐**, O-6 참조)
    - O-4 해외 dry-run 확장 전략(PP/BGU/CB/RSI2/OSB) would-be 성과 축적 → 전략별 엣지 판정. **2026-09-21 재집계 완료**: 08-24~09-21 통합 리포트에서 RSI2만 일봉 재구성 기준 canary 후보였으나 장중 교차표본이 1건뿐이라 전환은 보류한다. 상세는 O-4 항목.
 5. **[착수 가능 — 외부 의존 없음]**
@@ -182,7 +182,7 @@
   - **2026-11-02 부분 소급 복원**: `pt_history`(RETENTION_DAYS=7)가 지우기 전에 DB를 backup API로 고정하고 `scripts/backfill_program_trades_intraday.py`로 10-27~30 캡처에 시계열을 채웠다(커버리지 70.8~82.1%, 4일 모두 게이트 통과). 10-23/26은 원본이 없어 불가. 준비도 5/30. (`reports/validation_program_intraday_20261102.md`)
   - 남은 조건: 새 계약으로 유효 캡처를 25거래일 더 축적해야 한다. 10-27 이전 날짜는 `pt_history` 원본이 없어 소급 복원이 불가능하다. 분봉·일봉 replay 배선, 채널 돌파 실행 시각, VBO의 `required_data` 계약 오류는 2026-10-25 해소했다. 랭킹 보충분은 필터 통과 후보가 아닌 유동성 상위 종목이므로 계속 제외하고 `metadata.candidate_sources.base`만 PIT 후보로 해석한다.
   - 실행 메모: 첫 런이 REST 지배적(12거래일 ≈ 18~23분), **캐시 워밍 후 변형 런 ≈ 1분** — 후보만 갖춰지면 민감도 그리드는 저렴.
-- [ ] **(신규 2026-11-07) Minervini Stage2 전략의 검증 경로 편입 여부 결정** — 국내 `MinerviniStage2TransitionStrategy`(#1031, 스케줄러 등록 `enabled=False` "검증 후 수동 활성화")는 `scripts/run_backtest.py` 의 `ACTIVE_BACKTEST_STRATEGIES`(7종)에 없어, 30일 데이터가 차도 캠페인이 검증하지 않는다. 활성화 계획이 있으면 walk-forward 시작 전에 편입하고, 편입 시 1-7 multiple testing 대상 전략 수가 8로 늘어나는 것을 함께 반영한다. 미국 `intraday_minervini_stage2`(#1032)는 O-4 dry-run 표본 축으로 판정한다.
+- [x] **(2026-11-07 등재 → 같은 날 완료) Minervini Stage2 전략을 캡처 replay 검증 경로에 편입** — 이름만 `ACTIVE_BACKTEST_STRATEGIES` 에 넣으면 무의미했다: ① 후보가 `get_stage2_list()` 의 **최신** 거래일 목록이라 과거 날짜에 오늘의 Stage2 목록이 섞이고(#1050 과 같은 시점 오염), ② 캡처 파일에 없는 종목은 replay 현재가가 없어 전부 `price_unavailable` 로 탈락한다. 조치: `services/minervini_stage2_pit.py` 가 평가일 **직전 저장 거래일**의 daily_prices Stage2 목록·소속으로 후보와 청산 Stage 를 재생하고(`get_latest_trade_date_before` 추가), 장마감 캡처가 같은 시점 목록에 전략과 같은 선별 함수(`select_stage2_candidates`)를 적용한 종목을 `candidate_sources.minervini_stage2` 로 **max_codes cap 밖에** 보충한다. 이 소스 전용 종목은 수급 오버레이가 필요 없어 품질 게이트 분모에서 빠지므로 기존 코퍼스 유효성은 그대로다. ablation(유니버스 교체 variant 제외)·민감도 preset 도 추가했다. **남은 것**: Minervini 유효일은 배포 후 첫 캡처부터 쌓인다(기존 5/30 캡처에는 Stage2 보충 종목이 없다). 활성화 시 1-7 multiple testing 대상은 8개 전략이다. 보충 종목은 프로그램·체결강도 REST 폴백 대상이라 장마감 캡처의 REST 호출이 최대 30종목분 늘어난다. 미국 `intraday_minervini_stage2`(#1032)는 O-4 dry-run 표본 축으로 판정한다.
 
 주요 파일: `scripts/run_backtest.py`, `services/backtest_walk_forward.py`, `docs/backtest.md`, `data/backtest_*.json`
 
@@ -416,6 +416,7 @@
 - [x] **조립 지점 규약을 테스트로 고정 (2026-08-23)**: 위 감시 항목이 수기 계측이라 07-18~08-22 한 달간 갱신되지 않았던 문제를 해소한다. `tests/unit_test/view/web/bootstrap/test_assembly_point_guard.py` 가 `service_container.py` 의 **services/task import 개수(53 → 예산 56)** 와 **줄수(936 → 예산 980)** 를 고정하고, 초과 시 "신규 서비스군은 `view/web/bootstrap/<이름>_bootstrap.py` 로 분리한다(#659~664 · overseas_bootstrap 패턴)" 를 실패 메시지로 안내한다. 줄수보다 import 개수가 조립 누적의 직접 신호라 두 지표를 함께 건다(줄수만 보면 주석·docstring 이 신호를 흐린다). 예산을 올리려면 이 문서의 계측도 함께 갱신해야 하므로 문서 동기화가 강제된다. `strategy_scheduler.py`·`strategy_log_report_service.py` 는 조립 지점이 아니라 이번 가드 대상에서 제외 — 3-4 재승격 시 함께 판단한다.
 - **계측 갱신 (2026-08-30 실측)**: `service_container.py` 936→**943줄 / services·task import 53개**(예산 980줄·56개 — 가드는 아직 여유가 있다) · `scheduler/strategy_scheduler.py` 2,499→**2,526줄** · `strategy_log_report_service.py` 2,243줄(변동 없음).
 - **계측 갱신 (2026-09-17 실측)**: `service_container.py` 943→**964줄 / import 54개** — 예산(980줄·56개)에 **줄수 16줄·import 2개 남았다**. 다음 서비스군 조립부터는 예산을 올리는 게 아니라 전용 bootstrap 으로 빼야 한다(가드 실패 메시지가 안내하는 경로). `overseas_bootstrap.py` 481→**515줄 / import 30개**(가드 대상 아님 — 아래 사각지대 항목) · `scheduler/strategy_scheduler.py` **2,526줄**(변동 없음) · `strategy_log_report_service.py` 2,243→**2,270줄**. 신규 관측: `services/trade_trend_service.py` **1,082→1,634줄**(D-1, 3주 만에 +51%) — 조립부가 아니라 가드 밖이고, 현재 god class 감시 목록에도 없다. 다음 증가 시 감시 대상에 넣을지 판단한다.
+- **예산 조정 (2026-11-07)**: `service_container.py` 980→**981줄** 예산. 기존 `MicrostructureCaptureTask` 조립에 kwarg 1줄(1-8 Stage2 후보 보충)을 더한 것으로 서비스군 추가가 아니다. 새 서비스군은 여전히 전용 bootstrap 으로 뺀다.
 - **(2026-09-17) 운영 문서 동기화 2건**: #963 이 에이전트 지침(AGENTS/CLAUDE)의 **머지 게이트를 테스트 CI 단독**으로 명확히 했고(리뷰 봇은 게이트 아님), #961 이 `__Run.bat` 기동 전 갱신 절차를 손봤다. 코드 축은 아니지만 이 문서의 '게시 흐름' 과 짝이라 기록만 남긴다.
 - [x] **(2026-08-30 등재 → 2026-09-17 완료) 가드의 사각지대 — 조립이 `overseas_bootstrap.py` 로 옮겨가 그대로 쌓이고 있었다**: 08-22 추출 당시 220줄이던 파일이 #931/#932/#934/#935 를 거치며 **481줄 / services·task import 30개**가 됐다(9일 만에 2.2배). `service_container.py` 의 예산이 지켜진 이유의 상당 부분이 "해외 조립이 저기로 갔기 때문" 이라 **가드가 측정하는 곳과 실제로 누적되는 곳이 어긋났다**. #888 이 고정한 것은 파일 하나이지 규약이 아니다.
     - **2026-10-16 계측 갱신**: 미국 Minervini Stage 2 전략 추가 시 기존 예산을 올리지 않고 Pocket Pivot·Minervini 조립을 `overseas_growth_strategy_bootstrap.py` 로 분리했다. 구조 가드는 새 모듈을 **80줄 / services·task import 3개** 예산으로 함께 감시한다.

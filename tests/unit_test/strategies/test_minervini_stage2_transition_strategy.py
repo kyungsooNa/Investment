@@ -272,3 +272,23 @@ async def test_scan_fails_closed_when_stage_service_is_unavailable():
     strategy._stage_service = None
 
     assert await strategy.scan() == []
+
+
+def test_select_stage2_candidates_matches_scan_filters_and_rs_order():
+    from strategies.minervini_stage2_transition_strategy import select_stage2_candidates
+
+    cfg = MinerviniStage2TransitionConfig(max_candidates=2)
+    items = [
+        {"code": "A", "stage": 2, "rs_rating": 85, "market_cap": 40_000},
+        {"code": "B", "stage": 2, "rs_rating": 95, "market_cap": 40_000},
+        {"code": "C", "stage": 2, "rs_rating": 79, "market_cap": 40_000},  # RS 미달
+        {"code": "D", "stage": 2, "rs_rating": 99, "market_cap": 29_999},  # 시총 미달
+        {"code": "E", "stage": 3, "rs_rating": 99, "market_cap": 40_000},  # Stage 불일치
+        {"code": "", "stage": 2, "rs_rating": 99, "market_cap": 40_000},   # 코드 없음
+        {"code": "F", "stage": 2, "rs_rating": 90, "market_cap": 40_000},
+        "not-a-dict",
+    ]
+
+    selected = select_stage2_candidates(items, cfg)
+
+    assert [item["code"] for item in selected] == ["B", "F"]

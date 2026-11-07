@@ -33,6 +33,28 @@ class MinerviniStage2TransitionConfig:
     ohlcv_lookback_days: int = 260
 
 
+def select_stage2_candidates(
+    items: Any,
+    config: MinerviniStage2TransitionConfig,
+) -> list[dict]:
+    """Stage2 목록에서 진입 스캔 후보를 고른다 (RS·시총 하한, RS 내림차순 상위 N).
+
+    장마감 캡처가 같은 후보를 저장해야 백테스트 replay 가 라이브와 같은 종목을
+    평가할 수 있으므로 전략과 캡처가 이 함수를 공유한다. (todo 1-8)
+    """
+    number = MinerviniStage2TransitionStrategy._number
+    candidates = [
+        item for item in (items or [])
+        if isinstance(item, dict)
+        and int(item.get("stage", 2) or 0) == 2
+        and number(item.get("rs_rating")) >= config.min_rs_rating
+        and number(item.get("market_cap")) >= config.min_market_cap_100m
+        and item.get("code")
+    ]
+    candidates.sort(key=lambda item: number(item.get("rs_rating")), reverse=True)
+    return candidates[:config.max_candidates]
+
+
 class MinerviniStage2TransitionStrategy(LiveStrategy):
     """Buy recent Stage 2 transitions on a 20-day high breakout."""
 
@@ -68,16 +90,7 @@ class MinerviniStage2TransitionStrategy(LiveStrategy):
         if not response or response.rt_cd != "0" or not response.data:
             return []
 
-        candidates = [
-            item for item in response.data
-            if isinstance(item, dict)
-            and int(item.get("stage", 2) or 0) == 2
-            and self._number(item.get("rs_rating")) >= self._cfg.min_rs_rating
-            and self._number(item.get("market_cap")) >= self._cfg.min_market_cap_100m
-            and item.get("code")
-        ]
-        candidates.sort(key=lambda item: self._number(item.get("rs_rating")), reverse=True)
-        candidates = candidates[:self._cfg.max_candidates]
+        candidates = select_stage2_candidates(response.data, self._cfg)
         self._current_candidate_codes_set = {str(item["code"]) for item in candidates}
 
         prefetch = getattr(self._sqs, "prefetch_prices", None)

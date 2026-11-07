@@ -728,6 +728,28 @@ class TestGetLatestTradeDate:
         assert await repo.get_latest_trade_date() is None
 
 
+class TestGetLatestTradeDateBefore:
+    """get_latest_trade_date_before: 기준일 직전(미포함) 저장 거래일 — 백테스트 PIT 조회용."""
+
+    @pytest.mark.asyncio
+    async def test_returns_latest_date_strictly_before(self, repo):
+        await repo.upsert_daily_snapshot("20260410", [_make_snapshot("A001")])
+        await repo.upsert_daily_snapshot("20260413", [_make_snapshot("A001")])
+        await repo.upsert_daily_snapshot("20260414", [_make_snapshot("A001")])
+        assert await repo.get_latest_trade_date_before("20260414") == "20260413"
+        assert await repo.get_latest_trade_date_before("20260413") == "20260410"
+
+    @pytest.mark.asyncio
+    async def test_returns_none_without_earlier_date(self, repo):
+        await repo.upsert_daily_snapshot("20260414", [_make_snapshot("A001")])
+        assert await repo.get_latest_trade_date_before("20260414") is None
+
+    @pytest.mark.asyncio
+    async def test_exception_returns_none(self, repo, monkeypatch):
+        _broken_read_ctx(repo, monkeypatch)
+        assert await repo.get_latest_trade_date_before("20260414") is None
+
+
 # ── get_count_by_date ────────────────────────────────────────────────────────
 
 class TestGetCountByDate:

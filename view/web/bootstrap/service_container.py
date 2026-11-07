@@ -795,6 +795,7 @@ class ServiceContainer:
                     scheduler_store=StrategySchedulerStore(logger=ctx.logger),
                     logger=ctx.logger,
                     notification_service=ctx.notification_service,
+                    stage2_stock_repository=ctx.stock_repository,  # todo 1-8: Stage2 후보 보충
                 ) if microstructure_enabled else None
                 # todo 1-5: 장중 캡처 후보 프로그램매매 WS 구독 (pt_history 장중 시계열 축적).
                 # LOW 우선순위 — 트레이딩용 price 구독을 밀어내지 않는다.

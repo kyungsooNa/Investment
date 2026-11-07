@@ -26,9 +26,11 @@ def summarize_capture_quality(
 ) -> dict[str, Any]:
     thresholds = thresholds or MicrostructureQualityThresholds()
     metadata = payload.get("metadata") or {}
+    daily_signal_only = _daily_signal_only_codes(metadata)
     codes = [
         str(code)
         for code in (metadata.get("codes") or fallback_codes or [])
+        if str(code) not in daily_signal_only
     ]
     code_set = set(codes)
     code_count = len(codes)
@@ -153,6 +155,7 @@ def summarize_capture_quality(
     return {
         "trade_date": str(metadata.get("trade_date") or ""),
         "codes": code_count,
+        "daily_signal_only_codes": len(daily_signal_only),
         "intraday_available": intraday_available,
         "intraday_coverage_pct": intraday_coverage_pct,
         "execution_strength_available": execution_strength_available,
@@ -180,6 +183,28 @@ def summarize_capture_quality(
         "issues": issues,
         "warnings": warnings,
         "quality_gate_passed": not issues,
+    }
+
+
+# 일봉·현재가만 쓰는 전략의 캡처 보충 소스. 수급(프로그램·체결강도·호가) 오버레이를
+# 요구하지 않으므로 기존 코퍼스 품질 게이트의 분모에서 뺀다. base/랭킹과 겹친 종목은
+# 그쪽 소스로 귀속되므로 여기에는 보충 전용 종목만 남는다. (todo 1-8)
+DAILY_SIGNAL_ONLY_SOURCES = ("minervini_stage2",)
+
+
+def _daily_signal_only_codes(metadata: dict[str, Any]) -> set[str]:
+    sources = metadata.get("candidate_sources") or {}
+    other = {
+        str(code)
+        for source, source_codes in sources.items()
+        if source not in DAILY_SIGNAL_ONLY_SOURCES
+        for code in (source_codes or [])
+    }
+    return {
+        str(code)
+        for source in DAILY_SIGNAL_ONLY_SOURCES
+        for code in (sources.get(source) or [])
+        if str(code) not in other
     }
 
 
