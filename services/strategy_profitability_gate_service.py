@@ -77,12 +77,23 @@ class StrategyProfitabilityGateConfig:
 _FORCE_CLOSE_REASON = "reconciled_force_close"
 
 
+_DRY_RUN_SOURCE = "strategy_dry_run"
+
+
+def empty_sold_exclusion_counts() -> dict[str, int]:
+    return {"force_closed": 0, "data_quality_flag": 0, _DRY_RUN_SOURCE: 0}
+
+
 def sold_sample_exclusion(record: Mapping[str, Any]) -> Optional[str]:
     """gate SOLD 표본에서 뺄 행의 사유 (M-13).
 
     잔고 대사 강제종결(sell_price=0)은 실체결이 아니고, data_quality_flag 행은
-    수치를 믿을 수 없다고 표시된 기록이다. 둘 다 표본·지표에서 빼고 건수만 노출한다.
+    수치를 믿을 수 없다고 표시된 기록이다. 스케줄러 dry-run(#1060)은 신호가 기준
+    가상 체결이라 실전 진입 허용 근거로 쓰지 않는다(2026-11-07 결정, todo 1-7).
+    모두 표본·지표에서 빼고 건수만 노출한다.
     """
+    if str(record.get("source") or "").strip() == _DRY_RUN_SOURCE:
+        return _DRY_RUN_SOURCE
     metadata = record.get("metadata")
     metadata = metadata if isinstance(metadata, Mapping) else {}
     if str(record.get("data_quality_flag") or metadata.get("data_quality_flag") or "").strip():
@@ -119,7 +130,7 @@ def evaluate_strategy_profitability_gate(
             continue
         counts = excluded_sold.setdefault(
             str(record.get("strategy") or "").strip(),
-            {"force_closed": 0, "data_quality_flag": 0},
+            empty_sold_exclusion_counts(),
         )
         counts[exclusion] += 1
     strategy_names = sorted({str(record.get("strategy") or "").strip() for record in sold_records})

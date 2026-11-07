@@ -81,9 +81,10 @@ function renderStrategyReadiness(data) {
         const mixed = item.mixed_config ? ' ⚠️' : '';
         const reasons = (item.blocking_reasons || []).map(escapeReadinessHtml).join(', ') || '-';
         const excluded = item.excluded_sold || {};
-        const excludedTotal = (excluded.force_closed || 0) + (excluded.data_quality_flag || 0);
+        const excludedTotal = (excluded.force_closed || 0) + (excluded.data_quality_flag || 0)
+            + (excluded.strategy_dry_run || 0);
         const excludedNote = excludedTotal
-            ? ` <span style="color:#888;">(제외 ${excludedTotal}: 강제종결 ${excluded.force_closed || 0} · 오염플래그 ${excluded.data_quality_flag || 0})</span>`
+            ? ` <span style="color:#888;">(제외 ${excludedTotal}: 강제종결 ${excluded.force_closed || 0} · 오염플래그 ${excluded.data_quality_flag || 0} · dry-run ${excluded.strategy_dry_run || 0})</span>`
             : '';
         return `
             <tr>

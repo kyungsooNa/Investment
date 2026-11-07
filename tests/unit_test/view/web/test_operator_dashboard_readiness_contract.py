@@ -11,7 +11,7 @@ def test_operator_dashboard_contains_strategy_readiness_surface():
 
     assert 'id="readiness-summary"' in template
     assert 'id="strategy-readiness-body"' in template
-    assert "/static/js/operator_dashboard.js?v=4" in template
+    assert "/static/js/operator_dashboard.js?v=5" in template
 
 
 def test_operator_dashboard_fetches_and_renders_strategy_readiness():
@@ -21,3 +21,4 @@ def test_operator_dashboard_fetches_and_renders_strategy_readiness():
     assert "function renderStrategyReadiness" in script
     assert "config_cohorts" in script
     assert "excluded_sold" in script
+    assert "excluded.strategy_dry_run" in script

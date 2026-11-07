@@ -206,7 +206,8 @@
 
 - [~] formal PBO/DSR의 profitability gate **hard 적용 정책** 결정 — PBO/adjusted-Sharpe hard gate 옵션과 real-mode overlay(`require_multiple_testing_adjustment=True`, `multiple_testing_max_pbo_probability=0.5`)는 구현됨. DSR hard threshold만 미정 → canary 성과 축적 후 enforce 기준 확정.
 - [ ] 전략 수·필터 조합 증가 시 canary 통과 기준과 자금 확대 기준 분리(자금 확대 = formal 검증 + 실전 성과 + regime 일관성).
-  - **2026-11-07 코드 확인 — 판단 재료**: 단계 라벨은 갖춰졌지만(`virtual_trade`/`strategy_dry_run`/`broker_paper`/`broker_canary`/`broker_real_*`, shadow 는 `status=SIGNAL` 이라 SOLD 표본에서 자연 제외) **gate 는 source 를 보지 않는다**. `StrategyLiveExpansionGateService`(실전 모드 신규 진입 허용 판정)와 일일 리포트가 모든 source 의 SOLD 를 한 표본으로 합친다. 따라서 ① 스케줄러 dry-run(#1060, 신호가 기준 가상 체결)의 would-be 체결만으로 실전 진입이 열릴 수 있고 ② "자금 확대 = 실전 성과" 를 판정하려 해도 canary·real 체결 표본을 따로 셀 수단이 없다. 어떤 source 를 어느 판정(진입 허용 / 자금 확대)에 넣을지가 이 항목의 정책 결정이다. 코드 변경은 결정 후 착수.
+  - **2026-11-07 코드 확인 — 판단 재료**: 단계 라벨은 갖춰졌지만(`virtual_trade`/`strategy_dry_run`/`broker_paper`/`broker_canary`/`broker_real_*`, shadow 는 `status=SIGNAL` 이라 SOLD 표본에서 자연 제외) **gate 는 source 를 보지 않는다**. `StrategyLiveExpansionGateService`(실전 모드 신규 진입 허용 판정)와 일일 리포트가 모든 source 의 SOLD 를 한 표본으로 합친다. 따라서 ① 스케줄러 dry-run(#1060, 신호가 기준 가상 체결)의 would-be 체결만으로 실전 진입이 열릴 수 있고 ② "자금 확대 = 실전 성과" 를 판정하려 해도 canary·real 체결 표본을 따로 셀 수단이 없다. 어떤 source 를 어느 판정(진입 허용 / 자금 확대)에 넣을지가 이 항목의 정책 결정이다.
+  - **2026-11-07 결정·적용 (진입 허용)**: `strategy_dry_run` 만 gate SOLD 표본에서 제외한다(`sold_sample_exclusion`, 실전 진입 gate·일일 리포트·준비도 대시보드 공통, 제외 건수는 `excluded_sold.strategy_dry_run` 으로 노출). `virtual_trade`/`broker_*` 는 유지 — 과거 표본 대부분이 `virtual_trade` 라 현 판정 변화는 작다. **남은 결정**: 자금 확대 판정을 canary·real 실체결(`broker_canary`/`broker_real_*`) 표본으로 따로 셀지.
 - 우선순위 낮음: purged K-fold 별도 CV 러너(walk-forward+embargo·CSCV embargo로 실질 커버).
 
 주요 파일: `services/multiple_testing_bias_service.py`, `services/strategy_ablation_service.py`, `scripts/run_backtest.py`
