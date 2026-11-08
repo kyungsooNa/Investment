@@ -28,6 +28,27 @@ async def test_on_market_closed_runs_coverage_service():
     service.run.assert_awaited_once_with("20260505")
 
 
+async def test_on_market_closed_logs_skipped_result_instead_of_completed():
+    task = _make_task()
+    task._coverage_service.run = AsyncMock(
+        return_value=SimpleNamespace(
+            skipped=True,
+            skip_reason="historical_intraday_unavailable_in_paper",
+        )
+    )
+
+    await task._on_market_closed("20260505")
+
+    task._logger.info.assert_any_call(
+        "newhigh strategy coverage backtest 건너뜀: "
+        "20260505 (historical_intraday_unavailable_in_paper)"
+    )
+    assert not any(
+        "완료" in str(call)
+        for call in task._logger.info.call_args_list
+    )
+
+
 async def test_force_run_uses_market_calendar_date():
     service = MagicMock()
     service.run = AsyncMock()

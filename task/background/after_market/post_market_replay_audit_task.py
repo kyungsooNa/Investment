@@ -46,6 +46,13 @@ class PostMarketReplayAuditTask(AfterMarketTask):
         except Exception as e:
             self._logger.error(f"post-market replay audit 실패: {e}", exc_info=True)
             return
+        if bool(getattr(self._last_result, "skipped", False)):
+            skip_reason = getattr(self._last_result, "skip_reason", "") or "unspecified"
+            self._logger.info(
+                "post-market replay audit 건너뜀: "
+                f"{latest_trading_date} ({skip_reason})"
+            )
+            return
         self._logger.info(f"post-market replay audit 완료: {latest_trading_date}")
 
     async def force_run(self) -> None:

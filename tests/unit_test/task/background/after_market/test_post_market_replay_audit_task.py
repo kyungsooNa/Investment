@@ -1,3 +1,4 @@
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from interfaces.schedulable_task import TaskState
@@ -23,6 +24,27 @@ async def test_on_market_closed_runs_audit_service():
     await task._on_market_closed("20260505")
 
     service.run.assert_awaited_once_with("20260505")
+
+
+async def test_on_market_closed_logs_skipped_result_instead_of_completed():
+    task = _make_task()
+    task._audit_service.run = AsyncMock(
+        return_value=SimpleNamespace(
+            skipped=True,
+            skip_reason="historical_intraday_unavailable_in_paper",
+        )
+    )
+
+    await task._on_market_closed("20260505")
+
+    task._logger.info.assert_any_call(
+        "post-market replay audit 건너뜀: "
+        "20260505 (historical_intraday_unavailable_in_paper)"
+    )
+    assert not any(
+        "완료" in str(call)
+        for call in task._logger.info.call_args_list
+    )
 
 
 async def test_force_run_uses_market_calendar_date():
@@ -77,8 +99,6 @@ def test_get_progress_without_result():
 
 
 def test_get_progress_with_result():
-    from types import SimpleNamespace
-
     task = _make_task()
     task._last_result = SimpleNamespace(
         target_date="20260505",
