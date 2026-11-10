@@ -11,6 +11,7 @@ import asyncio
 import json
 import logging
 import os
+import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass
@@ -19,6 +20,8 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable, Iterable, Optional
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+
+from common.config_hashing import compute_config_hash
 
 ACTIVE_BACKTEST_STRATEGIES = (
     "oneil_pocket_pivot",
@@ -30,6 +33,28 @@ ACTIVE_BACKTEST_STRATEGIES = (
     "larry_williams_channel_breakout",
     "minervini_stage2_transition",
 )
+
+
+def _strategy_version_metadata(strategy: Any) -> dict[str, str]:
+    """현재 전략 설정과 코드 revision을 백테스트 재현성 메타데이터로 만든다."""
+    config_hash = compute_config_hash(getattr(strategy, "_cfg", None))
+    git_commit = ""
+    try:
+        completed = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+        if completed.returncode == 0:
+            git_commit = str(completed.stdout or "").strip()
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return {
+        "strategy_config_hash": config_hash,
+        "git_commit": git_commit,
+    }
 
 
 def _parse_args() -> argparse.Namespace:
@@ -1736,6 +1761,7 @@ async def _run(args: argparse.Namespace) -> None:
                 "use_risk_sizing": args.use_risk_sizing,
                 "output": args.output,
                 "walk_forward": segment is not None,
+                **_strategy_version_metadata(strategy),
             }
             if segment is not None:
                 metadata.update(

@@ -4,7 +4,7 @@ async function loadBacktestResults() {
     const body = document.getElementById('backtest-results-body');
     const summary = document.getElementById('backtest-results-summary');
     if (!body || !summary) return;
-    body.innerHTML = '<tr><td colspan="12">불러오는 중...</td></tr>';
+    body.innerHTML = '<tr><td colspan="15">불러오는 중...</td></tr>';
     summary.textContent = '백테스트 결과를 불러오는 중입니다.';
     try {
         const response = await fetchWithTimeout('/api/backtest/results?limit=200', {}, 30000);
@@ -16,7 +16,7 @@ async function loadBacktestResults() {
     } catch (error) {
         console.error('[Backtest] result load failed:', error);
         summary.textContent = '백테스트 결과를 불러오지 못했습니다.';
-        body.innerHTML = '<tr><td colspan="12">결과 로드 실패</td></tr>';
+        body.innerHTML = '<tr><td colspan="15">결과 로드 실패</td></tr>';
     }
 }
 
@@ -37,15 +37,17 @@ function renderBacktestResults() {
     if (!body || !summary) return;
     const strategy = document.getElementById('backtest-strategy-filter')?.value || '';
     const validity = document.getElementById('backtest-validity-filter')?.value || '';
+    const configCohort = document.getElementById('backtest-config-filter')?.value || '';
     const rows = backtestResults.filter(row =>
         (!strategy || row.strategy === strategy)
         && (!validity || row.validity?.status === validity)
+        && (!configCohort || row.config_cohort === configCohort)
     );
     const validCount = rows.filter(row => row.validity?.status === 'VALID').length;
     summary.innerHTML = `<span>표시 <strong>${rows.length}</strong>건 · 유효 <strong>${validCount}</strong>건</span>`
         + '<span style="margin-left:12px;">유효 판정이 없는 수익률은 투자 근거로 확정하지 않습니다.</span>';
     if (!rows.length) {
-        body.innerHTML = '<tr><td colspan="12">조건에 맞는 백테스트 결과가 없습니다.</td></tr>';
+        body.innerHTML = '<tr><td colspan="15">조건에 맞는 백테스트 결과가 없습니다.</td></tr>';
         return;
     }
     body.innerHTML = rows.map(row => {
@@ -53,6 +55,9 @@ function renderBacktestResults() {
         return `<tr title="${escapeHtml(status.reason || '')}">
             <td><strong>${escapeHtml(status.label || status.status || '-')}</strong></td>
             <td>${escapeHtml(row.strategy || '-')}</td>
+            <td>${formatBacktestConfigCohort(row.config_cohort)}</td>
+            <td><code>${escapeHtml(row.config_hash || '-')}</code></td>
+            <td><code>${escapeHtml((row.git_commit || '').slice(0, 12) || '-')}</code></td>
             <td>${formatBacktestDate(row.start_date)} ~ ${formatBacktestDate(row.end_date)}</td>
             <td>${Number(row.date_count || 0).toLocaleString()}일</td>
             <td>${Number(row.completed_trade_count || 0).toLocaleString()}건</td>
@@ -65,6 +70,14 @@ function renderBacktestResults() {
             <td>${formatBacktestSavedAt(row.saved_at)}</td>
         </tr>`;
     }).join('');
+}
+
+function formatBacktestConfigCohort(value) {
+    return {
+        LATEST: '최신 저장 설정',
+        LEGACY: '과거 설정',
+        UNKNOWN: '설정 미기록',
+    }[value] || '-';
 }
 
 function formatBacktestDate(value) {

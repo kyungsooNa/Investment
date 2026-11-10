@@ -29,6 +29,14 @@
                     <option value="AUDIT_ONLY">감사 전용</option>
                 </select>
             </label>
+            <label>설정 세대
+                <select id="backtest-config-filter" onchange="renderBacktestResults()">
+                    <option value="">전체</option>
+                    <option value="LATEST">최신 저장 설정</option>
+                    <option value="LEGACY">과거 설정</option>
+                    <option value="UNKNOWN">설정 미기록</option>
+                </select>
+            </label>
         </div>
 
         <div id="backtest-results-summary" class="stats-box" style="margin-top:14px;">
@@ -41,6 +49,9 @@
                     <tr>
                         <th>유효성</th>
                         <th>전략</th>
+                        <th>설정 세대</th>
+                        <th>설정 hash</th>
+                        <th>코드 commit</th>
                         <th>기간</th>
                         <th>거래일</th>
                         <th>완료 거래</th>
@@ -54,7 +65,7 @@
                     </tr>
                 </thead>
                 <tbody id="backtest-results-body">
-                    <tr><td colspan="12">불러오는 중...</td></tr>
+                    <tr><td colspan="15">불러오는 중...</td></tr>
                 </tbody>
             </table>
         </div>
@@ -63,5 +74,5 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="/static/js/backtest.js?v=1"></script>
+<script src="/static/js/backtest.js?v=2"></script>
 {% endblock %}
