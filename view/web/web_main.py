@@ -591,6 +591,16 @@ async def virtual(request: Request):
         required_role=OPERATOR,
     )
 
+@page_router.get("/backtest")
+async def backtest(request: Request):
+    return await render_page(
+        request,
+        "backtest.html",
+        "backtest",
+        view_market="domestic",
+        required_role=OPERATOR,
+    )
+
 @page_router.get("/scheduler")
 async def scheduler(request: Request):
     return await render_page(

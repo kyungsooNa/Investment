@@ -92,6 +92,7 @@
                 {% if can_operate %}<a href="/balance" class="{% if active_page == 'balance' %}active{% endif %}">계좌 잔고</a>{% endif %}
                 {% if can_operate %}<a href="/order" class="{% if active_page == 'order' %}active{% endif %}">매수/매도</a>{% endif %}
                 {% if can_operate %}<a href="/virtual" class="{% if active_page == 'virtual' %}active{% endif %}">모의투자 기록</a>{% endif %}
+                {% if can_operate %}<a href="/backtest" class="{% if active_page == 'backtest' %}active{% endif %}">백테스트 결과</a>{% endif %}
                 <a href="/ranking" class="{% if active_page == 'ranking' %}active{% endif %}">랭킹</a>
                 <a href="/marketcap" class="{% if active_page == 'marketcap' %}active{% endif %}">시가총액</a>
                 {% if can_operate %}<a href="/program" class="{% if active_page == 'program' %}active{% endif %}">프로그램매매</a>{% endif %}

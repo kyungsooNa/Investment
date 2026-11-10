@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section id="section-backtest" class="section">
+    <div class="card">
+        <div class="form-row" style="justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap;">
+            <div>
+                <h2 style="margin-bottom:6px;">백테스트 결과</h2>
+                <p style="margin:0; color:var(--text-secondary);">저장된 기간 백테스트의 실현 성과와 결과 유효성을 함께 확인합니다.</p>
+            </div>
+            <button class="btn" type="button" onclick="loadBacktestResults()">새로고침</button>
+        </div>
+
+        <div class="form-row" style="margin-top:16px; gap:10px; flex-wrap:wrap;">
+            <label>전략
+                <select id="backtest-strategy-filter" onchange="renderBacktestResults()">
+                    <option value="">전체</option>
+                </select>
+            </label>
+            <label>유효성
+                <select id="backtest-validity-filter" onchange="renderBacktestResults()">
+                    <option value="">전체</option>
+                    <option value="VALID">유효</option>
+                    <option value="UNVERIFIED">미검증</option>
+                    <option value="INSUFFICIENT_SAMPLE">표본 부족</option>
+                    <option value="DATA_INCOMPLETE">데이터 부족</option>
+                    <option value="LOOKAHEAD_RISK">미래참조 위험</option>
+                    <option value="INVALID">무효</option>
+                    <option value="AUDIT_ONLY">감사 전용</option>
+                </select>
+            </label>
+        </div>
+
+        <div id="backtest-results-summary" class="stats-box" style="margin-top:14px;">
+            <span>결과를 불러오는 중입니다.</span>
+        </div>
+
+        <div class="table-container" style="margin-top:14px;">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>유효성</th>
+                        <th>전략</th>
+                        <th>기간</th>
+                        <th>거래일</th>
+                        <th>완료 거래</th>
+                        <th>실현수익률</th>
+                        <th>실현손익</th>
+                        <th>승률</th>
+                        <th>평균 순수익률</th>
+                        <th>PF</th>
+                        <th>보유 중</th>
+                        <th>저장 시각</th>
+                    </tr>
+                </thead>
+                <tbody id="backtest-results-body">
+                    <tr><td colspan="12">불러오는 중...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/backtest.js?v=1"></script>
+{% endblock %}
