@@ -28,7 +28,9 @@ from scripts.run_backtest import (
     _run_profitability_gate_for_walk_forward,
     _run_monte_carlo_for_result,
     _run_monte_carlo_for_walk_forward,
+    _strategy_version_metadata,
 )
+from common.config_hashing import compute_config_hash
 from services.backtest_execution_simulator import BacktestPortfolioLedger, PortfolioPosition
 from services.backtest_replay_adapter import (
     StockQueryDailyMtmBarProvider,
@@ -42,6 +44,33 @@ def test_build_dates_accepts_comma_separated_dates():
     args = SimpleNamespace(dates="20260501,20260503", start_date=None, end_date=None)
 
     assert _build_dates(args) == ["20260501", "20260503"]
+
+
+def test_strategy_version_metadata_stamps_config_hash_and_git_commit(monkeypatch):
+    strategy = SimpleNamespace(_cfg={"k_value": 0.5, "stop_loss_pct": -3.0})
+    completed = SimpleNamespace(returncode=0, stdout="abcdef1234567890\n")
+    monkeypatch.setattr(run_backtest.subprocess, "run", MagicMock(return_value=completed))
+
+    metadata = _strategy_version_metadata(strategy)
+
+    assert metadata == {
+        "strategy_config_hash": compute_config_hash(strategy._cfg),
+        "git_commit": "abcdef1234567890",
+    }
+
+
+def test_strategy_version_metadata_keeps_empty_commit_when_git_lookup_fails(monkeypatch):
+    strategy = SimpleNamespace(_cfg={"k_value": 0.5})
+    monkeypatch.setattr(
+        run_backtest.subprocess,
+        "run",
+        MagicMock(side_effect=OSError("git unavailable")),
+    )
+
+    metadata = _strategy_version_metadata(strategy)
+
+    assert metadata["strategy_config_hash"] == compute_config_hash(strategy._cfg)
+    assert metadata["git_commit"] == ""
 
 
 def test_build_dates_accepts_inclusive_start_end_range():

@@ -11,10 +11,25 @@ class BacktestResultService:
         self._repository = repository
 
     def list_results(self, *, limit: int | None = 50) -> list[dict[str, Any]]:
-        return [
+        results = [
             self._summarize(run, self._repository.load_records(run.get("run_id", "")))
             for run in self._repository.list_runs(limit=limit)
         ]
+        latest_hash_by_strategy: dict[str, str] = {}
+        for result in results:
+            strategy = result["strategy"]
+            config_hash = result["config_hash"]
+            if config_hash and strategy not in latest_hash_by_strategy:
+                latest_hash_by_strategy[strategy] = config_hash
+        for result in results:
+            config_hash = result["config_hash"]
+            if not config_hash:
+                result["config_cohort"] = "UNKNOWN"
+            elif config_hash == latest_hash_by_strategy.get(result["strategy"]):
+                result["config_cohort"] = "LATEST"
+            else:
+                result["config_cohort"] = "LEGACY"
+        return results
 
     def _summarize(self, run: dict[str, Any], records: list[dict[str, Any]]) -> dict[str, Any]:
         metadata = run.get("metadata") if isinstance(run.get("metadata"), dict) else {}
@@ -43,6 +58,10 @@ class BacktestResultService:
             "start_date": dates[0] if dates else _target_date_part(run.get("target_date"), 0),
             "end_date": dates[-1] if dates else _target_date_part(run.get("target_date"), -1),
             "saved_at": str(run.get("saved_at") or ""),
+            "config_hash": str(
+                metadata.get("strategy_config_hash") or metadata.get("config_hash") or ""
+            ),
+            "git_commit": str(metadata.get("git_commit") or ""),
             "date_count": int(metadata.get("date_count") or len(dates)),
             "record_count": int(run.get("record_count") or len(records)),
             "completed_trade_count": len(completed),

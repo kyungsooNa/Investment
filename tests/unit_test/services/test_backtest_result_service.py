@@ -83,3 +83,24 @@ def test_audit_run_is_not_presented_as_profitability_backtest():
     assert result["validity"]["status"] == "AUDIT_ONLY"
     assert "수익성" in result["validity"]["reason"]
 
+
+def test_results_separate_latest_legacy_and_unknown_config_cohorts():
+    repo = MagicMock()
+    latest = _run_summary(run_id="latest")
+    latest["metadata"]["strategy_config_hash"] = "new123"
+    latest["metadata"]["git_commit"] = "abcdef123456"
+    legacy = _run_summary(run_id="legacy")
+    legacy["metadata"]["strategy_config_hash"] = "old456"
+    unknown = _run_summary(run_id="unknown")
+    repo.list_runs.return_value = [latest, legacy, unknown]
+    repo.load_records.return_value = []
+
+    results = BacktestResultService(repo).list_results()
+
+    assert [(row["config_hash"], row["config_cohort"]) for row in results] == [
+        ("new123", "LATEST"),
+        ("old456", "LEGACY"),
+        ("", "UNKNOWN"),
+    ]
+    assert results[0]["git_commit"] == "abcdef123456"
+

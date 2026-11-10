@@ -151,6 +151,8 @@ def test_pages_render_success_no_login(web_client, mock_web_ctx):
             assert 'href="/backtest" class="active">백테스트 결과</a>' in response.text
             assert 'id="backtest-results-body"' in response.text
             assert 'id="backtest-validity-filter"' in response.text
+            assert 'id="backtest-config-filter"' in response.text
+            assert "설정 hash" in response.text
             assert "/static/js/backtest.js" in response.text
         elif path == "/scheduler":
             assert "한국장 전략 스케줄러" in response.text

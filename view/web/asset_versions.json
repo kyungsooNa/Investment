@@ -12,8 +12,8 @@
     "sha256": "7467909c8b56f6f5837142a00de80794522829f7dd2950f54764d690b3ad6e10"
   },
   "js/backtest.js": {
-    "version": 1,
-    "sha256": "8e0caedc7a96f5a0b5608a130362bc7c7aa6690eb24e04461c896575ee48bbe1"
+    "version": 2,
+    "sha256": "ebb6b8afdc5b144406dcdb83d7d839c8b071ca6b00952b95f5bf2d2022411332"
   },
   "js/balance.js": {
     "version": 2,
