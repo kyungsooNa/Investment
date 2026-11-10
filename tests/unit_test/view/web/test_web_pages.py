@@ -20,6 +20,7 @@ PAGES = [
     ("/ranking", "ranking"),
     ("/marketcap", "marketcap"),
     ("/virtual", "virtual"),
+    ("/backtest", "backtest"),
     ("/scheduler", "scheduler"),
     ("/overseas-scheduler", "overseas_scheduler"),
     ("/program", "program"),
@@ -145,6 +146,12 @@ def test_pages_render_success_no_login(web_client, mock_web_ctx):
             assert "<th>주문</th>" in response.text
             assert "<th>체결수량</th>" in response.text
             assert "<th>슬리피지</th>" in response.text
+        elif path == "/backtest":
+            assert "백테스트 결과" in response.text
+            assert 'href="/backtest" class="active">백테스트 결과</a>' in response.text
+            assert 'id="backtest-results-body"' in response.text
+            assert 'id="backtest-validity-filter"' in response.text
+            assert "/static/js/backtest.js" in response.text
         elif path == "/scheduler":
             assert "한국장 전략 스케줄러" in response.text
             assert "SCHEDULER_MARKET = 'domestic'" in response.text
