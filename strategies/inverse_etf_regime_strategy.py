@@ -34,6 +34,8 @@ class InverseEtfRegimeStrategy(LiveStrategy):
       - 레짐 게이트: MarketRegimeService 가 regime_market 을 'bear'(hard_decline)로 분류
       - 추세 확인: 인버스 ETF 현재가 > trend_ma_period MA (당일봉 제외)
       - 장중 확인: 현재가 > 시가, 전일 대비 등락률 > 0%
+      - 하락 주체 확인: KOSPI 외국인+기관 당일 누적 순매도, 삼성전자·SK하이닉스 모두 음봉
+        (현재가 < 시가 & 전일 대비 하락). 조회 실패 시 미진입.
       - 단일 종목·에피소드 1회 (position_state 보유 중이면 미진입)
 
     청산 (check_exits), 우선순위:
@@ -143,6 +145,10 @@ class InverseEtfRegimeStrategy(LiveStrategy):
             })
             return []
 
+        confirmation = await self._confirm_selling_pressure(code)
+        if confirmation is None:
+            return []
+
         asking_resp = await self._sqs.get_asking_price(code)
         ask_price = self._extract_best_ask(asking_resp)
         if ask_price <= 0:
@@ -160,7 +166,7 @@ class InverseEtfRegimeStrategy(LiveStrategy):
         stop_loss_price = ask_price * (1 + self._cfg.hard_stop_pct / 100)
         reason_msg = (
             f"베어 레짐({regime.trend_status}) + 추세확인(현재가 {current} > {self._cfg.trend_ma_period}MA "
-            f"{ma:.0f}) 진입"
+            f"{ma:.0f}){confirmation} 진입"
         )
         self._logger.info({
             "event": "entry_signal_generated", "code": code, "name": name,
@@ -316,6 +322,43 @@ class InverseEtfRegimeStrategy(LiveStrategy):
         )
 
     # ── helpers ─────────────────────────────────────────────────────
+
+    async def _confirm_selling_pressure(self, code: str) -> Optional[str]:
+        """외국인+기관 순매도·반도체 대형주 음봉을 확인한다.
+
+        통과 시 매수 사유에 덧붙일 문구(빈 문자열 가능), 미통과·확인 불가 시 None.
+        """
+        suffix = ""
+        if self._cfg.smart_money_filter_enabled:
+            flow = await self._sqs.get_index_investor_netbuy(self._cfg.smart_money_index_code)
+            try:
+                net = int(flow["foreign"]) + int(flow["institution"])
+            except (KeyError, TypeError, ValueError):
+                self._logger.info({
+                    "event": "entry_rejected", "code": code, "reason": "investor_flow_unavailable",
+                })
+                return None
+            if net >= self._cfg.max_smart_money_net_buy_100m:
+                self._logger.info({
+                    "event": "entry_rejected", "code": code, "reason": "smart_money_not_selling",
+                    "foreign": flow["foreign"], "institution": flow["institution"],
+                })
+                return None
+            suffix += f" + 외인·기관 {net:,}억"
+
+        if self._cfg.semiconductor_filter_enabled:
+            for semi in self._cfg.semiconductor_codes:
+                resp = await self._sqs.get_current_price(semi, caller=self.name)
+                current, open_price, change_rate = self._extract_entry_quote(resp)
+                if current <= 0 or open_price <= 0 or current >= open_price or change_rate >= 0:
+                    self._logger.info({
+                        "event": "entry_rejected", "code": code,
+                        "reason": "semiconductor_not_bearish", "semi_code": semi,
+                        "current": current, "open_price": open_price, "change_rate": change_rate,
+                    })
+                    return None
+            suffix += " + 반도체 음봉"
+        return suffix
 
     @staticmethod
     def _extract_current_price(resp) -> int:
