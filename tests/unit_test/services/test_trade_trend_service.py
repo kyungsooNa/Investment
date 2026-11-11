@@ -692,10 +692,10 @@ def test_format_national_trade_trend_report_html_includes_link_and_numbers():
     message = format_national_trade_trend_report_html(release)
 
     assert "전국 수출입 잠정치" in message
-    assert "수출: <b>298.0억 달러</b> (전년비 +53.9% / 전월비 +41.0억, +15.9%)" in message
+    assert "수출 총액: <b>298.0억 달러</b> (전년비 +53.9% / 전월비 +41.0억, +15.9%)" in message
     assert "일평균 수출: <b>35.1억 달러</b> (전월비 +12.0%, 조업 8.5일)" in message
     assert "반도체: <b>112.0억 달러</b> (전년비 +120.5% / 전월비 +12.0억, +12.0% / 일평균 +18.0%)" in message
-    assert "수입: <b>235.0억 달러</b> (전년비 +17.4% / 전월비 -12.0억, -4.9%)" in message
+    assert "수입 총액: <b>235.0억 달러</b> (전년비 +17.4% / 전월비 -12.0억, -4.9%)" in message
     assert "일평균 수입: <b>27.6억 달러</b> (전월비 +4.1%, 조업 8.5일)" in message
     assert "반도체 수입: <b>49.5억 달러</b> (전년비 +91.5% / 전월비 +9.9억, +24.9% / 일평균 +2.8%)" in message
     assert "반도체 수출 비중: <b>47.1%</b>" in message
