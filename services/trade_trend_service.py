@@ -1591,7 +1591,7 @@ def format_national_trade_trend_report_html(
         title = "전국 월간 수출입 확정치"
     lines = [
         f"🌐 <b>{title} ({html.escape(release.period_label, quote=False)})</b>",
-        f"수출: <b>{money(release.export_amount_100m_usd)}</b> "
+        f"수출 총액: <b>{money(release.export_amount_100m_usd)}</b> "
         f"({change_text(release.export_yoy_pct, release.export_mom_change_100m_usd, release.export_mom_pct)})",
     ]
     if release.export_daily_avg_100m_usd is not None:
@@ -1627,7 +1627,7 @@ def format_national_trade_trend_report_html(
     if release.semiconductor_export_share_pct is not None:
         lines.append(f"반도체 수출 비중: <b>{release.semiconductor_export_share_pct:.1f}%</b>")
     lines.append(
-        f"수입: <b>{money(release.import_amount_100m_usd)}</b> "
+        f"수입 총액: <b>{money(release.import_amount_100m_usd)}</b> "
         f"({change_text(release.import_yoy_pct, release.import_mom_change_100m_usd, release.import_mom_pct)})"
     )
     if release.import_daily_avg_100m_usd is not None:

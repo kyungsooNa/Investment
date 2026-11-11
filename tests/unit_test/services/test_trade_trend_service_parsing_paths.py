@@ -372,7 +372,7 @@ def test_national_report_title_follows_the_phase(phase, expected_title):
 def test_national_report_renders_dashes_for_missing_values():
     text = format_national_trade_trend_report_html(_release())
 
-    assert "수출: <b>-</b>" in text
+    assert "수출 총액: <b>-</b>" in text
     assert "전년비 -" in text
     assert "무역수지: <b>-</b>" in text
 
