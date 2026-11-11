@@ -23,6 +23,13 @@ class InverseEtfRegimeConfig(BaseStrategyConfig):
     # 추세 확인 — 인버스 ETF 자체가 일봉 상승추세일 때만 진입(낙하 칼날/휩쏘 방지)
     trend_ma_period: int = 20
 
+    # 장중 하락 주체 확인 — 지수를 실제로 끌어내리는 수급·대형주가 같은 방향일 때만 진입
+    smart_money_filter_enabled: bool = True
+    smart_money_index_code: str = "0001"          # KOSPI
+    max_smart_money_net_buy_100m: float = 0.0     # 외국인+기관 당일 누적 순매수(억원)가 이 값 미만
+    semiconductor_filter_enabled: bool = True
+    semiconductor_codes: tuple = ("005930", "000660")  # 삼성전자, SK하이닉스 — 모두 음봉이어야 함
+
     # 청산
     hard_stop_pct: float = -5.0       # 진입가 대비 net 손절(%)
     intraday_invalidation_pct: float = -2.0  # 시가 아래에서 당일 이 수익률 이하면 조기 청산

@@ -1,6 +1,6 @@
 # tests/unit_test/strategies/test_inverse_etf_regime_strategy.py
 import pytest
-from unittest.mock import MagicMock, AsyncMock, patch
+from unittest.mock import MagicMock, AsyncMock, DEFAULT, patch
 from datetime import datetime
 
 from common.types import ResCommonResponse, TradeSignal
@@ -57,6 +57,9 @@ def _regime(label):
     )
 
 
+_SEMI_CODES = ("005930", "000660")
+
+
 # ── 공통 Fixture ──────────────────────────────────────────────────
 
 @pytest.fixture
@@ -69,6 +72,7 @@ def mock_deps():
 
     sqs.get_current_price = AsyncMock(spec=StockQueryService.get_current_price)
     sqs.get_asking_price = AsyncMock(spec=StockQueryService.get_asking_price)
+    sqs.get_index_investor_netbuy = AsyncMock(spec=StockQueryService.get_index_investor_netbuy)
     regime.classify = AsyncMock(spec=MarketRegimeService.classify)
     indicator.get_moving_average = AsyncMock(spec=IndicatorService.get_moving_average)
 
@@ -95,6 +99,16 @@ def bear_setup(strategy, mock_deps):
     indicator.get_moving_average.return_value = _ma_resp(9500.0)  # current(10000) > MA
     sqs.get_current_price.return_value = _price_resp("10000", open_price="9900")
     sqs.get_asking_price.return_value = _asking_resp("10000")
+    # 장중 확인 필터 통과: 외국인+기관 순매도 + 삼성전자·SK하이닉스 음봉
+    sqs.get_index_investor_netbuy.return_value = {
+        "individual": 1500, "foreign": -1000, "institution": -500,
+    }
+    semis = {code: _price_resp("50000", open_price="51000", change_rate="-1.5")
+             for code in _SEMI_CODES}
+    sqs.get_current_price.side_effect = (
+        lambda code, **kwargs: semis.get(code, DEFAULT)
+    )
+    sqs._semis = semis
     return strategy, sqs, regime, indicator, tm, logger
 
 
@@ -206,6 +220,96 @@ async def test_scan_rejects_inverse_with_negative_daily_return(bear_setup):
     )
 
     assert await strat.scan() == []
+
+
+def _rejected_with(logger, reason):
+    return any(
+        call.args and isinstance(call.args[0], dict) and call.args[0].get("reason") == reason
+        for call in logger.info.call_args_list
+    )
+
+
+@pytest.mark.asyncio
+async def test_scan_rejects_when_foreign_and_institution_are_net_buying(bear_setup):
+    """지수가 빠져도 외국인+기관 합산이 순매수면 하락 주체가 없으므로 진입하지 않는다."""
+    strat, sqs, _, _, _, logger = bear_setup
+    sqs.get_index_investor_netbuy.return_value = {
+        "individual": -300, "foreign": -200, "institution": 500,
+    }
+
+    assert await strat.scan() == []
+    assert _rejected_with(logger, "smart_money_not_selling")
+
+
+@pytest.mark.asyncio
+async def test_scan_rejects_when_investor_flow_is_unavailable(bear_setup):
+    """수급 조회 실패 시 확인 불가 → 보수적으로 진입하지 않는다."""
+    strat, sqs, _, _, _, logger = bear_setup
+    sqs.get_index_investor_netbuy.return_value = None
+
+    assert await strat.scan() == []
+    assert _rejected_with(logger, "investor_flow_unavailable")
+
+
+@pytest.mark.asyncio
+async def test_scan_checks_kospi_investor_flow(bear_setup):
+    strat, sqs, _, _, _, _ = bear_setup
+
+    await strat.scan()
+
+    assert sqs.get_index_investor_netbuy.await_args.args == ("0001",)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("code", _SEMI_CODES)
+async def test_scan_rejects_when_a_semiconductor_leader_is_not_bearish(bear_setup, code):
+    """삼성전자·SK하이닉스 중 하나라도 양봉(현재가 ≥ 시가)이면 진입하지 않는다."""
+    strat, sqs, _, _, _, logger = bear_setup
+    sqs._semis[code] = _price_resp("52000", open_price="51000", change_rate="-0.5")
+
+    assert await strat.scan() == []
+    assert _rejected_with(logger, "semiconductor_not_bearish")
+
+
+@pytest.mark.asyncio
+async def test_scan_rejects_when_semiconductor_leader_is_up_on_the_day(bear_setup):
+    """시가 아래 음봉이어도 전일 대비 플러스면 약세로 보지 않는다."""
+    strat, sqs, _, _, _, logger = bear_setup
+    sqs._semis["000660"] = _price_resp("50000", open_price="51000", change_rate="0.8")
+
+    assert await strat.scan() == []
+    assert _rejected_with(logger, "semiconductor_not_bearish")
+
+
+@pytest.mark.asyncio
+async def test_scan_rejects_when_semiconductor_quote_is_unavailable(bear_setup):
+    strat, sqs, _, _, _, logger = bear_setup
+    sqs._semis["005930"] = ResCommonResponse(rt_cd="1", msg1="ERR", data=None)
+
+    assert await strat.scan() == []
+    assert _rejected_with(logger, "semiconductor_not_bearish")
+
+
+@pytest.mark.asyncio
+async def test_scan_buy_reason_includes_flow_and_semiconductor_confirmation(bear_setup):
+    strat, _, _, _, _, _ = bear_setup
+
+    sig = (await strat.scan())[0]
+
+    assert "외인·기관 -1,500억" in sig.reason
+    assert "반도체 음봉" in sig.reason
+
+
+@pytest.mark.asyncio
+async def test_scan_skips_confirmation_filters_when_disabled(bear_setup):
+    strat, sqs, _, _, _, _ = bear_setup
+    strat._cfg.smart_money_filter_enabled = False
+    strat._cfg.semiconductor_filter_enabled = False
+    sqs.get_index_investor_netbuy.return_value = None
+    sqs._semis["005930"] = _price_resp("52000", open_price="51000", change_rate="1.0")
+
+    assert len(await strat.scan()) == 1
+    sqs.get_index_investor_netbuy.assert_not_awaited()
 
 
 @pytest.mark.asyncio
