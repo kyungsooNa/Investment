@@ -1,6 +1,7 @@
 """장마감 replay/coverage 백테스트 태스크 조립."""
 
 import os
+import sys
 from typing import TYPE_CHECKING
 
 from scheduler.strategy_scheduler_store import StrategySchedulerStore
@@ -8,12 +9,20 @@ from services.newhigh_strategy_coverage_backtest_service import (
     NewHighStrategyCoverageBacktestService,
 )
 from services.post_market_replay_audit_service import PostMarketReplayAuditService
+from services.validation_campaign_service import (
+    SubprocessStrategyRunner,
+    ValidationCampaignService,
+)
+from scripts.run_backtest import ACTIVE_BACKTEST_STRATEGIES
 from strategies.debug.strategy_debug_runner import StrategyDebugRunner
 from task.background.after_market.newhigh_strategy_coverage_backtest_task import (
     NewHighStrategyCoverageBacktestTask,
 )
 from task.background.after_market.post_market_replay_audit_task import (
     PostMarketReplayAuditTask,
+)
+from task.background.after_market.weekly_backtest_campaign_task import (
+    WeeklyBacktestCampaignTask,
 )
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -63,6 +72,34 @@ class BacktestTaskBootstrap:
                 env=ctx.env,
                 logger=ctx.logger,
             ),
+            mcs=ctx._mcs,
+            market_clock=ctx.market_clock,
+            logger=ctx.logger,
+            worker_pool=ctx.worker_pool,
+        )
+
+        raw_config = ctx.full_config
+        if hasattr(raw_config, "model_dump"):
+            raw_config = raw_config.model_dump()
+        weekly_config = (raw_config or {}).get("weekly_backtest_campaign") or {}
+        if not weekly_config.get("enabled", True):
+            ctx.weekly_backtest_campaign_task = None
+            return
+
+        replay_dir = weekly_config.get("replay_dir", "data/backtest_microstructure")
+        strategies = weekly_config.get("strategies") or ACTIVE_BACKTEST_STRATEGIES
+        scheduler_store = StrategySchedulerStore(logger=ctx.logger)
+        ctx.weekly_backtest_campaign_task = WeeklyBacktestCampaignTask(
+            campaign_service=ValidationCampaignService(
+                replay_dir=replay_dir,
+                strategies=strategies,
+                strategy_runner=SubprocessStrategyRunner(
+                    python_executable=sys.executable,
+                    paper=bool(weekly_config.get("use_paper_data", False)),
+                ),
+            ),
+            scheduler_store=scheduler_store,
+            min_valid_dates=int(weekly_config.get("min_valid_dates", 30)),
             mcs=ctx._mcs,
             market_clock=ctx.market_clock,
             logger=ctx.logger,

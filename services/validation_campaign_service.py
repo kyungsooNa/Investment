@@ -2,10 +2,51 @@
 from __future__ import annotations
 
 from collections import Counter
+import json
 from pathlib import Path
+import subprocess
+import tempfile
 from typing import Callable, Iterable
 
 from services.captured_candidate_universe import CapturedCandidateProvider
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+
+class SubprocessStrategyRunner:
+    """전략별 백테스트를 격리된 subprocess에서 실행한다."""
+
+    def __init__(self, *, python_executable: str, paper: bool = False) -> None:
+        self._python = python_executable
+        self._paper = paper
+
+    def build_command(
+        self, strategy: str, dates: list[str], replay_dir: Path, output_path: Path,
+    ) -> list[str]:
+        command = [
+            self._python, "-m", "scripts.run_backtest",
+            "--strategy", strategy, "--dates", ",".join(dates),
+            "--microstructure-dir", str(replay_dir),
+            "--captured-candidate-dir", str(replay_dir),
+            "--output", "json", "--output-file", str(output_path),
+        ]
+        if self._paper:
+            command.append("--paper")
+        return command
+
+    def __call__(self, strategy: str, dates: list[str], replay_dir: Path) -> dict:
+        with tempfile.TemporaryDirectory(prefix="validation_campaign_") as temp_dir:
+            output_path = Path(temp_dir) / f"{strategy}.json"
+            completed = subprocess.run(
+                self.build_command(strategy, dates, replay_dir, output_path),
+                cwd=PROJECT_ROOT, text=True, encoding="utf-8", errors="replace",
+                capture_output=True, check=False,
+            )
+            if completed.returncode != 0:
+                detail = (completed.stderr or completed.stdout or "unknown error").strip()
+                raise RuntimeError(f"backtest exit={completed.returncode}: {detail[-2000:]}")
+            return json.loads(output_path.read_text(encoding="utf-8"))
 
 
 class ValidationCampaignService:

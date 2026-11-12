@@ -22,6 +22,7 @@ after_market_tasks:
     ohlcv_update: 20             # OhlcvUpdateTask — 장 마감 20분 후
     post_market_replay_audit: 30  # PostMarketReplayAuditTask — live 후보군 missed-signal 감사
     newhigh_strategy_coverage_backtest: 35  # NewHighStrategyCoverageBacktestTask — 신고가 전략 미매수 비율 백테스트
+    weekly_backtest_campaign: 75  # WeeklyBacktestCampaignTask — 주 마지막 거래일 유효 캡처 전략 검증
     newhigh: 21                  # NewHighTask — daily_price_collector 완료(21분) + 여유
     minervini_update: 21        # MinerviniUpdateTask — 장 마감 21분 후
     전일기준주도주_생성: 50        # PremiumWatchlistGeneratorTask — 장 마감 50분 후

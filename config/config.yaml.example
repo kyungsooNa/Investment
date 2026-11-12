@@ -433,6 +433,13 @@ market_cap_gap_report_us_enabled: true
 # 장마감 후 후보/보유 종목 microstructure overlay 캡처 (백테스트 replay 코퍼스 축적, KST 16:05)
 microstructure_capture_enabled: true
 
+# 주 마지막 거래일 장 마감 후 유효 캡처로 활성 전략을 자동 검증한다.
+weekly_backtest_campaign:
+  enabled: true
+  replay_dir: data/backtest_microstructure
+  min_valid_dates: 30
+  use_paper_data: false  # 과거 일별분봉 API는 실전 시세 조회 모드가 필요할 수 있음 (주문은 발생하지 않음)
+
 # 장중 캡처 후보 종목 WS 순환 구독 (일반주 PT+동반 PRICE, 우선주 PRICE 전용).
 # LOW 우선순위로 트레이딩 구독을 밀어내지 않으며, 30분마다 다음 후보 묶음으로 교체한다.
 program_capture_subscription_enabled: true
