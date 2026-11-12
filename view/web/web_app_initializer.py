@@ -52,6 +52,7 @@ from task.background.after_market.strategy_log_report_task import StrategyLogRep
 from task.background.after_market.after_market_reconcile_task import AfterMarketReconcileTask
 from task.background.after_market.post_market_replay_audit_task import PostMarketReplayAuditTask
 from task.background.after_market.newhigh_strategy_coverage_backtest_task import NewHighStrategyCoverageBacktestTask
+from task.background.after_market.weekly_backtest_campaign_task import WeeklyBacktestCampaignTask
 from services.strategy_log_report_service import StrategyLogReportService, _REASON_KR
 from services.rejection_distribution_service import RejectionDistributionService
 from task.background.always_on.notification_queue_task import NotificationQueueTask
@@ -178,6 +179,7 @@ class WebAppContext:
         self.strategy_log_report_task: StrategyLogReportTask = None
         self.post_market_replay_audit_task: PostMarketReplayAuditTask = None
         self.newhigh_strategy_coverage_backtest_task: NewHighStrategyCoverageBacktestTask = None
+        self.weekly_backtest_campaign_task: WeeklyBacktestCampaignTask = None
         self.stock_repository: StockRepository = None
         self.background_scheduler: BackgroundScheduler = None
         self.foreground_scheduler: ForegroundScheduler = None

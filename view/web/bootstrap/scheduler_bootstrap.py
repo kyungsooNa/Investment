@@ -201,6 +201,11 @@ class SchedulerBootstrap:
             TaskPriority.LOW,
             catchup_missed=True,
         )
+        self._register(
+            self._optional_task("weekly_backtest_campaign_task"),
+            TaskPriority.LOW,
+            catchup_missed=True,
+        )
         self._register(ctx.strategy_log_report_task, TaskPriority.LOW, catchup_missed=True)
         self._register(ctx.after_market_reconcile_task, TaskPriority.LOW)
         # 자체 AfterMarketLoop 사용 (KST 16:05): market_cap_gap 과 동일 패턴.
