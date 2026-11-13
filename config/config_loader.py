@@ -512,6 +512,10 @@ class StrategyProfitabilityGateConfig(BaseModel):
     multiple_testing_sharpe_metric: str = "sharpe_ratio"
     multiple_testing_in_sample_metric: str = "in_sample_net_pnl"
     multiple_testing_out_of_sample_metric: str = "out_of_sample_net_pnl"
+    multiple_testing_min_deflated_sharpe_probability: Optional[float] = None
+    multiple_testing_sample_size_metric: str = "trade_count"
+    multiple_testing_skew_metric: str = "return_skew"
+    multiple_testing_kurtosis_metric: str = "return_kurtosis"
     strategy_correlation_min_overlap: int = 5
     strategy_correlation_warning_threshold: float = 0.8
     strategy_correlation_metric: str = "net_return"
