@@ -1423,11 +1423,14 @@ class StrategyScheduler:
             # push 가 누락된다 (notification_queue_task._should_send_external 참고).
             level = NotificationLevel.CRITICAL if api_success else NotificationLevel.ERROR
             success_label = "성공" if self._dry_run else "주문 접수"
-            title = f"[{signal.strategy_name}] {signal.name} {action_kr} {success_label if api_success else '실패'}"
+            action_label = f"가상{action_kr}" if self._dry_run and api_success else action_kr
+            title = f"[{signal.strategy_name}] {signal.name} {action_label} {success_label if api_success else '실패'}"
             msg = (f"종목: {signal.name}({signal.code})\n"
                    f"주문: {log_price:,}원 × {signal.qty}주\n"
                    f"사유: {signal.reason}")
-            if api_success and not self._dry_run:
+            if api_success and self._dry_run:
+                msg = f"{msg}\n상태: 가상체결 기록(증권사 주문 미전송)"
+            elif api_success:
                 msg = f"{msg}\n상태: 주문 접수(API 성공, 체결 미확정 - 체결통보/조회로 별도 확인)"
             if not api_success:
                 title = f"[{signal.strategy_name}] {signal.name} {action_kr} 실패"
