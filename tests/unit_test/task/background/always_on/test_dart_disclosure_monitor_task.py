@@ -47,6 +47,7 @@ def _make_task(
         return_value=DartDisclosurePage(items, 1, 100, len(items), 1)
     )
     client.fetch_disclosure_text = AsyncMock(return_value="공시 실제 본문")
+    client.fetch_periodic_financial_summary = AsyncMock(return_value="")
     repo = MagicMock()
     repo.is_initialized = AsyncMock(return_value=initialized)
     repo.mark_initialized = AsyncMock()
@@ -207,6 +208,28 @@ async def test_ai_analyzer_failure_falls_back_to_rule_only_alert():
         disclosure, importance, ai_summary=None
     )
     deps.repo.mark_immediate_sent.assert_awaited_once()
+
+
+async def test_periodic_report_financial_summary_is_prepended_for_ai_analysis():
+    disclosure = _disclosure(report_name="분기보고서 (2026.09)")
+    preliminary = DisclosureImportance(30, "NORMAL", ["정기보고서"])
+    promoted = DisclosureImportance(75, "HIGH", ["실적 급증"])
+    analyzer = MagicMock()
+    analyzer.analyze = AsyncMock(
+        return_value=AiDisclosureAnalysis("매출과 영업이익이 급증했습니다.", promoted)
+    )
+    deps = _make_task([disclosure], initialized=True, ai_analyzer=analyzer)
+    deps.rules.evaluate.return_value = preliminary
+    deps.client.fetch_periodic_financial_summary.return_value = (
+        "[OpenDART 핵심 재무실적]\n수익: 당분기 346,130,681,010원"
+    )
+
+    await deps.task._tick()
+
+    analyzed_text = analyzer.analyze.await_args.args[2]
+    assert analyzed_text.startswith("[OpenDART 핵심 재무실적]")
+    assert analyzed_text.endswith("공시 실제 본문")
+    assert deps.repo.save_detected.await_args.args[1] == promoted
 
 
 async def test_existing_rule_fallback_is_reanalyzed_and_promoted_after_ai_recovers():
