@@ -20,7 +20,11 @@ def test_build_readiness_combines_gate_progress_config_cohorts_and_capture_quali
     replay_dir = tmp_path / "backtest_microstructure"
     replay_dir.mkdir()
     (replay_dir / "replay_quality_20260929.json").write_text(
-        json.dumps({"valid_for_backtest": True, "passed": True}),
+        json.dumps({
+            "valid_for_backtest": True,
+            "passed": True,
+            "program_intraday_db_coverage_pct": 80.0,
+        }),
         encoding="utf-8",
     )
     (replay_dir / "replay_quality_20260930.json").write_text(
@@ -66,6 +70,26 @@ def test_build_readiness_combines_gate_progress_config_cohorts_and_capture_quali
     assert beta["status"] == "insufficient_sample"
     assert beta["sold_trades"] == 0
     assert beta["config_cohorts"][0]["config_hash"] == "ccc333"
+
+
+def test_build_readiness_excludes_legacy_quality_contract_from_valid_days(tmp_path):
+    (tmp_path / "replay_quality_20261015.json").write_text(
+        json.dumps({"valid_for_backtest": True, "passed": True}),
+        encoding="utf-8",
+    )
+    (tmp_path / "replay_quality_20261113.json").write_text(
+        json.dumps({
+            "valid_for_backtest": True,
+            "passed": True,
+            "program_intraday_db_coverage_pct": 82.1,
+        }),
+        encoding="utf-8",
+    )
+
+    result = build_strategy_validation_readiness([], replay_dir=tmp_path)
+
+    assert result["summary"]["valid_capture_days"] == 1
+    assert result["summary"]["latest_valid_capture_date"] == "20261113"
 
 
 def test_build_readiness_reports_malformed_quality_files_without_failing(tmp_path):
