@@ -232,6 +232,29 @@ async def test_periodic_report_financial_summary_is_prepended_for_ai_analysis():
     assert deps.repo.save_detected.await_args.args[1] == promoted
 
 
+async def test_periodic_financial_summary_is_forwarded_to_telegram_alert():
+    disclosure = _disclosure(report_name="분기보고서 (2026.09)")
+    importance = DisclosureImportance(75, "HIGH", ["실적 급증"])
+    analyzer = MagicMock()
+    analyzer.analyze = AsyncMock(
+        return_value=AiDisclosureAnalysis("실적 해설", importance)
+    )
+    deps = _make_task([disclosure], initialized=True, ai_analyzer=analyzer)
+    deps.rules.evaluate.return_value = DisclosureImportance(30, "NORMAL", ["정기보고서"])
+    deps.client.fetch_periodic_financial_summary.return_value = (
+        "[OpenDART 핵심 재무실적]\n이번 분기: 매출 3,461억"
+    )
+    deps.repo.get_pending_immediate.return_value = [
+        StoredDisclosure(disclosure, importance)
+    ]
+
+    await deps.task._tick()
+
+    assert deps.reporter.send_disclosure_alert.await_args.kwargs["financial_summary"] == (
+        "[OpenDART 핵심 재무실적]\n이번 분기: 매출 3,461억"
+    )
+
+
 async def test_existing_rule_fallback_is_reanalyzed_and_promoted_after_ai_recovers():
     disclosure = _disclosure(report_name="풍문또는보도에대한해명")
     fallback = DisclosureImportance(10, "LOW", ["일반 공시"])

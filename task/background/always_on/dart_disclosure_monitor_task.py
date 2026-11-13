@@ -45,6 +45,7 @@ class DartDisclosureMonitorTask(SchedulableTask):
         self._ai_analyzer = ai_analyzer
         self._notification_service = notification_service
         self._ai_analysis_cache: Dict[str, Optional[AiDisclosureAnalysis]] = {}
+        self._financial_summary_cache: Dict[str, str] = {}
         self._state = TaskState.IDLE
         self._tasks: List[asyncio.Task] = []
         self._tick_lock: Optional[asyncio.Lock] = None
@@ -315,6 +316,9 @@ class DartDisclosureMonitorTask(SchedulableTask):
                 alert_kwargs = {"ai_summary": ai_summary}
                 if ai_impact_score is not None:
                     alert_kwargs["ai_impact_score"] = ai_impact_score
+                financial_summary = self._financial_summary_cache.get(receipt_no, "")
+                if financial_summary:
+                    alert_kwargs["financial_summary"] = financial_summary
                 sent = await self._reporter.send_disclosure_alert(
                     item.disclosure, item.importance, **alert_kwargs
                 )
@@ -332,6 +336,7 @@ class DartDisclosureMonitorTask(SchedulableTask):
                     receipt_no, now
                 )
                 self._ai_analysis_cache.pop(receipt_no, None)
+                self._financial_summary_cache.pop(receipt_no, None)
                 self._progress["sent_count"] += 1
                 self._logger.info(
                     "%s: 텔레그램 발송 완료 receipt_no=%s", self.task_name, receipt_no
@@ -390,6 +395,7 @@ class DartDisclosureMonitorTask(SchedulableTask):
                 f"{disclosure.receipt_no}: {type(exc).__name__}: {exc}"
             )
         if financial_summary:
+            self._financial_summary_cache[disclosure.receipt_no] = financial_summary
             document_text = f"{financial_summary}\n\n{document_text}"
         return await self._ai_analyzer.analyze(
             disclosure, preliminary, document_text

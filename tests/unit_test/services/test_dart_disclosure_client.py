@@ -215,34 +215,52 @@ async def test_fetch_disclosure_text_stops_once_the_char_budget_is_reached():
 
 async def test_fetch_periodic_financial_summary_prioritizes_core_results():
     http_client = AsyncMock()
-    http_client.get.return_value = _response({
-        "status": "000",
-        "message": "정상",
-        "list": [
-            {
-                "sj_div": "CIS", "account_id": "ifrs-full_Revenue", "account_nm": "수익",
-                "thstrm_nm": "제 27 기 3분기", "thstrm_amount": "346130681010",
-                "thstrm_add_amount": "816540661494",
-                "frmtrm_q_nm": "제 26 기 3분기", "frmtrm_q_amount": "110951148841",
-                "frmtrm_add_amount": "210458327548",
-            },
-            {
-                "sj_div": "CIS", "account_id": "dart_OperatingIncomeLoss", "account_nm": "영업이익(손실)",
-                "thstrm_nm": "제 27 기 3분기", "thstrm_amount": "159882519960",
-                "thstrm_add_amount": "348867044018", "frmtrm_q_amount": "13901794568",
-                "frmtrm_add_amount": "21939153135",
-            },
-            {
-                "sj_div": "CIS", "account_id": "ifrs-full_ProfitLoss", "account_nm": "당기순이익(손실)",
-                "thstrm_amount": "67266135257", "thstrm_add_amount": "260165413095",
-                "frmtrm_q_amount": "22689908827", "frmtrm_add_amount": "24395963328",
-            },
-            {
-                "sj_div": "CF", "account_id": "ifrs-full_ProfitLoss",
-                "account_nm": "당기순이익(손실)", "thstrm_amount": "260165413095",
-            },
-        ],
-    })
+
+    def payload(revenue, operating_profit, net_profit, *, cumulative=None):
+        cumulative = cumulative or (revenue, operating_profit, net_profit)
+        return _response({
+            "status": "000",
+            "message": "정상",
+            "list": [
+                {
+                    "sj_div": "CIS", "account_id": "ifrs-full_Revenue", "account_nm": "수익",
+                    "thstrm_amount": str(revenue), "thstrm_add_amount": str(cumulative[0]),
+                },
+                {
+                    "sj_div": "CIS", "account_id": "dart_OperatingIncomeLoss",
+                    "account_nm": "영업이익(손실)", "thstrm_amount": str(operating_profit),
+                    "thstrm_add_amount": str(cumulative[1]),
+                },
+                {
+                    "sj_div": "CIS", "account_id": "ifrs-full_ProfitLoss",
+                    "account_nm": "당기순이익(손실)", "thstrm_amount": str(net_profit),
+                    "thstrm_add_amount": str(cumulative[2]),
+                },
+                {
+                    "sj_div": "CF", "account_id": "ifrs-full_ProfitLoss",
+                    "account_nm": "당기순이익(손실)", "thstrm_amount": str(sum(cumulative)),
+                },
+            ],
+        })
+
+    responses = {
+        ("2026", "11014"): payload(346130681010, 159882519960, 67266135257),
+        ("2026", "11012"): payload(289938012131, 121871077131, 145019513740),
+        ("2026", "11013"): payload(180471968353, 67113446927, 47879764098),
+        ("2025", "11011"): payload(
+            301894767000, 92340000000, 62900000000,
+            cumulative=(301894767000, 92340000000, 62900000000),
+        ),
+        ("2025", "11014"): payload(
+            110951148841, 13901794568, 22689908827,
+            cumulative=(210100000000, 78400000000, 47800000000),
+        ),
+    }
+
+    async def get_financial(_url, *, params, **_kwargs):
+        return responses[(params["bsns_year"], params["reprt_code"])]
+
+    http_client.get.side_effect = get_financial
     client = DartDisclosureClient("secret", http_client=http_client)
     disclosure = DartDisclosure(
         corp_class="K", corp_name="제주반도체", corp_code="00447487",
@@ -253,11 +271,15 @@ async def test_fetch_periodic_financial_summary_prioritizes_core_results():
 
     summary = await client.fetch_periodic_financial_summary(disclosure)
 
-    assert "당분기 346,130,681,010원" in summary
-    assert "누적 816,540,661,494원" in summary
-    assert "영업이익(손실): 당분기 159,882,519,960원" in summary
-    assert "당기순이익(손실): 당분기 67,266,135,257원" in summary
-    params = http_client.get.await_args.kwargs["params"]
+    assert "매출 3,461억 / 영업이익 1,599억 / 순이익 673억" in summary
+    assert "전분기 대비: 매출 +19.4% / 영업이익 +31.2% / 순이익 -53.6%" in summary
+    assert "최근 실적 추이 (매출/영업이익/순이익)" in summary
+    assert "2026.3Q 3,461억 / 1,599억 / 673억" in summary
+    assert "2026.2Q 2,899억 / 1,219억 / 1,450억" in summary
+    assert "2026.1Q 1,805억 / 671억 / 479억" in summary
+    assert "2025.4Q 918억 / 139억 / 151억" in summary
+    assert "2025.3Q 1,110억 / 139억 / 227억" in summary
+    params = http_client.get.await_args_list[0].kwargs["params"]
     assert params["corp_code"] == "00447487"
     assert params["bsns_year"] == "2026"
     assert params["reprt_code"] == "11014"

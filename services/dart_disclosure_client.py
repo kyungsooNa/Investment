@@ -4,6 +4,7 @@ from __future__ import annotations
 import re
 import warnings
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import List, Optional
 
 import httpx
@@ -153,46 +154,75 @@ class DartDisclosureClient:
     async def fetch_periodic_financial_summary(
         self, disclosure: DartDisclosure
     ) -> str:
-        """정기보고서의 핵심 손익을 OpenDART 재무제표 API에서 짧게 추출한다."""
-        report_code = self._periodic_report_code(disclosure.report_name)
-        year_match = re.search(r"20\d{2}", str(disclosure.report_name or ""))
-        business_year = (
-            year_match.group(0)
-            if year_match
-            else str(disclosure.receipt_date or "")[:4]
+        """정기보고서의 핵심 손익과 최근 5개 분기 추이를 추출한다."""
+        current_period = self._periodic_report_period(
+            disclosure.report_name, disclosure.receipt_date
         )
-        if not report_code or len(business_year) != 4 or not disclosure.corp_code:
+        if current_period is None or not disclosure.corp_code:
             return ""
 
-        params = {
-            "crtfc_key": self._api_key,
-            "corp_code": disclosure.corp_code,
-            "bsns_year": business_year,
-            "reprt_code": report_code,
-            "fs_div": "CFS",
-        }
+        async def fetch(client) -> str:
+            report_cache = {}
 
-        async def fetch(client) -> dict:
-            response = await client.get(
-                self.FINANCIAL_URL,
-                params=params,
-                timeout=self._timeout_sec,
-            )
-            response.raise_for_status()
-            return response.json()
+            async def report_rows(year: int, report_code: str) -> list[dict]:
+                key = (year, report_code)
+                if key in report_cache:
+                    return report_cache[key]
+                response = await client.get(
+                    self.FINANCIAL_URL,
+                    params={
+                        "crtfc_key": self._api_key,
+                        "corp_code": disclosure.corp_code,
+                        "bsns_year": str(year),
+                        "reprt_code": report_code,
+                        "fs_div": "CFS",
+                    },
+                    timeout=self._timeout_sec,
+                )
+                response.raise_for_status()
+                payload = response.json()
+                status = str(payload.get("status") or "")
+                if status == "013":
+                    rows = []
+                elif status != "000":
+                    raise DartApiError(status, payload.get("message", ""))
+                else:
+                    rows = payload.get("list") or []
+                report_cache[key] = rows
+                return rows
+
+            async def quarter_values(year: int, quarter: int):
+                if quarter == 4:
+                    annual = self._core_financial_amounts(
+                        await report_rows(year, "11011"), "thstrm_amount"
+                    )
+                    through_q3 = self._core_financial_amounts(
+                        await report_rows(year, "11014"), "thstrm_add_amount"
+                    )
+                    if annual is None or through_q3 is None:
+                        return None
+                    return tuple(total - q3 for total, q3 in zip(annual, through_q3))
+                report_code = {1: "11013", 2: "11012", 3: "11014"}[quarter]
+                return self._core_financial_amounts(
+                    await report_rows(year, report_code), "thstrm_amount"
+                )
+
+            periods = []
+            year, quarter = current_period
+            for _ in range(5):
+                values = await quarter_values(year, quarter)
+                if values is not None:
+                    periods.append((year, quarter, values))
+                quarter -= 1
+                if quarter == 0:
+                    year -= 1
+                    quarter = 4
+            return self._format_financial_summary(periods)
 
         if self._http_client is not None:
-            payload = await fetch(self._http_client)
-        else:
-            async with httpx.AsyncClient(timeout=self._timeout_sec) as client:
-                payload = await fetch(client)
-
-        status = str(payload.get("status") or "")
-        if status == "013":
-            return ""
-        if status != "000":
-            raise DartApiError(status, payload.get("message", ""))
-        return self._format_financial_summary(payload.get("list") or [], report_code)
+            return await fetch(self._http_client)
+        async with httpx.AsyncClient(timeout=self._timeout_sec) as client:
+            return await fetch(client)
 
     @staticmethod
     def _periodic_report_code(report_name: str) -> str:
@@ -206,7 +236,26 @@ class DartDisclosureClient:
         return ""
 
     @staticmethod
-    def _format_financial_summary(rows: list[dict], report_code: str) -> str:
+    def _periodic_report_period(report_name: str, receipt_date: str):
+        name = str(report_name or "")
+        if not DartDisclosureClient._periodic_report_code(name):
+            return None
+        year_match = re.search(r"20\d{2}", name)
+        year_text = year_match.group(0) if year_match else str(receipt_date or "")[:4]
+        if len(year_text) != 4:
+            return None
+        if "사업보고서" in name:
+            quarter = 4
+        elif "반기보고서" in name:
+            quarter = 2
+        elif re.search(r"\.0?3\D", name):
+            quarter = 1
+        else:
+            quarter = 3
+        return int(year_text), quarter
+
+    @staticmethod
+    def _core_financial_amounts(rows: list[dict], amount_field: str):
         account_ids = (
             "ifrs-full_Revenue",
             "dart_OperatingIncomeLoss",
@@ -217,33 +266,58 @@ class DartDisclosureClient:
         ]
         by_id = {str(row.get("account_id") or ""): row for row in income_rows}
         selected = [by_id[account_id] for account_id in account_ids if account_id in by_id]
-        if not selected:
+        if len(selected) != len(account_ids):
+            return None
+
+        values = []
+        for row in selected:
+            text = str(row.get(amount_field) or "").replace(",", "").strip()
+            try:
+                values.append(int(text))
+            except ValueError:
+                return None
+        return tuple(values)
+
+    @staticmethod
+    def _format_financial_summary(periods) -> str:
+        if not periods:
             return ""
 
-        current_label = {
-            "11011": "당기",
-            "11012": "당반기",
-            "11013": "당분기",
-            "11014": "당분기",
-        }[report_code]
+        def eok(value: int) -> str:
+            rounded = (Decimal(value) / Decimal(100_000_000)).quantize(
+                Decimal("1"), rounding=ROUND_HALF_UP
+            )
+            return f"{int(rounded):,}억"
 
-        def amount(value) -> str:
-            text = str(value or "").replace(",", "").strip()
-            try:
-                return f"{int(text):,}원"
-            except ValueError:
+        def change(current: int, previous: int) -> str:
+            if previous == 0:
                 return "-"
+            try:
+                ratio = (Decimal(current - previous) / abs(Decimal(previous))) * 100
+                rounded = ratio.quantize(Decimal("0.1"), rounding=ROUND_HALF_UP)
+            except (InvalidOperation, ZeroDivisionError):
+                return "-"
+            return f"{rounded:+.1f}%"
 
-        lines = ["[OpenDART 핵심 재무실적]"]
-        for row in selected:
-            values = [f"{current_label} {amount(row.get('thstrm_amount'))}"]
-            if row.get("thstrm_add_amount") not in (None, ""):
-                values.append(f"누적 {amount(row.get('thstrm_add_amount'))}")
-            if row.get("frmtrm_q_amount") not in (None, ""):
-                values.append(f"전년 동기 {amount(row.get('frmtrm_q_amount'))}")
-            if row.get("frmtrm_add_amount") not in (None, ""):
-                values.append(f"전년 누적 {amount(row.get('frmtrm_add_amount'))}")
-            lines.append(f"{row.get('account_nm') or row.get('account_id')}: " + "; ".join(values))
+        _, _, current = periods[0]
+        lines = [
+            "[OpenDART 핵심 재무실적]",
+            "이번 분기: "
+            f"매출 {eok(current[0])} / 영업이익 {eok(current[1])} / 순이익 {eok(current[2])}",
+        ]
+        if len(periods) >= 2:
+            previous = periods[1][2]
+            lines.append(
+                "전분기 대비: "
+                f"매출 {change(current[0], previous[0])} / "
+                f"영업이익 {change(current[1], previous[1])} / "
+                f"순이익 {change(current[2], previous[2])}"
+            )
+        lines.append("최근 실적 추이 (매출/영업이익/순이익)")
+        for year, quarter, values in periods:
+            lines.append(
+                f"{year}.{quarter}Q {eok(values[0])} / {eok(values[1])} / {eok(values[2])}"
+            )
         return "\n".join(lines)
 
     async def _request(self, client, params):

@@ -803,6 +803,7 @@ class TelegramReporter:
         importance,
         ai_summary: Optional[str] = None,
         ai_impact_score: Optional[int] = None,
+        financial_summary: Optional[str] = None,
     ) -> bool:
         """관심종목 중요 공시 한 건을 즉시 전송한다.
 
@@ -831,12 +832,33 @@ class TelegramReporter:
                     f"<b>AI 투자 영향:</b> {impact_score:+d} / +5 ({impact_label})\n"
                 )
             ai_block += "\n"
+        financial_block = ""
+        if financial_summary:
+            financial_lines = []
+            for line in str(financial_summary).strip().splitlines():
+                if line.startswith("[OpenDART"):
+                    continue
+                escaped = html.escape(line, quote=False)
+                for label in ("이번 분기:", "전분기 대비:"):
+                    if line.startswith(label):
+                        escaped = f"<b>{label}</b>" + html.escape(
+                            line[len(label):], quote=False
+                        )
+                        break
+                if line.startswith("최근 실적 추이"):
+                    escaped = f"<b>{escaped}</b>"
+                financial_lines.append(escaped)
+            if financial_lines:
+                financial_block = (
+                    "📊 <b>핵심 실적</b>\n" + "\n".join(financial_lines) + "\n\n"
+                )
         message = (
             "🚨 <b>관심종목 중요 공시</b>\n\n"
             f"<b>{company} ({stock_code})</b>\n"
             f"<b>공시:</b> {report_name}\n"
             f"<b>중요도:</b> {html.escape(str(importance.level), quote=False)} "
             f"({int(importance.score)}점)\n\n"
+            f"{financial_block}"
             f"{ai_block}"
             f"<b>판정 근거</b>\n{reasons}\n\n"
             f"<b>접수일:</b> {html.escape(str(disclosure.receipt_date), quote=False)}\n"

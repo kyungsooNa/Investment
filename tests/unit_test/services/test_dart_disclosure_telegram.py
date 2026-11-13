@@ -58,6 +58,32 @@ async def test_send_disclosure_alert_includes_ai_summary_block_when_provided():
     assert "전환사채 발행 &lt;주의&gt;" in message
 
 
+async def test_send_disclosure_alert_places_financial_trend_before_ai_summary():
+    reporter = TelegramReporter("token", "chat")
+    reporter._send_message = AsyncMock(return_value=True)
+    stored = _stored("분기보고서 (2026.09)", 85)
+    financial_summary = (
+        "[OpenDART 핵심 재무실적]\n"
+        "이번 분기: 매출 3,461억 / 영업이익 1,599억 / 순이익 673억\n"
+        "전분기 대비: 매출 +19.4% / 영업이익 +31.2% / 순이익 -53.6%\n"
+        "최근 실적 추이 (매출/영업이익/순이익)\n"
+        "2026.3Q 3,461억 / 1,599억 / 673억"
+    )
+
+    await reporter.send_disclosure_alert(
+        stored.disclosure,
+        stored.importance,
+        ai_summary="영업은 성장했지만 순이익은 감소했습니다.",
+        financial_summary=financial_summary,
+    )
+
+    message = reporter._send_message.await_args.args[0]
+    assert "📊 <b>핵심 실적</b>" in message
+    assert "<b>이번 분기:</b> 매출 3,461억 / 영업이익 1,599억 / 순이익 673억" in message
+    assert "<b>전분기 대비:</b> 매출 +19.4% / 영업이익 +31.2% / 순이익 -53.6%" in message
+    assert message.index("핵심 실적") < message.index("AI 요약")
+
+
 async def test_send_disclosure_alert_includes_ai_investment_impact_score():
     reporter = TelegramReporter("token", "chat")
     reporter._send_message = AsyncMock(return_value=True)
