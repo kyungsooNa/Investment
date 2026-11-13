@@ -56,9 +56,76 @@ async def test_stock_vi_alert_enriches_missing_exchange_and_stock_name():
     args = operator_alert.report.await_args.args
     kwargs = operator_alert.report.await_args.kwargs
     assert args[1] == "market_status:stock_vi:KOSDAQ:080220"
-    assert args[4] == "KOSDAQ 제주반도체(080220): VI적용구분코드=Y"
+    assert "KOSDAQ 제주반도체(080220)" in args[4]
+    assert "VI 유형: 상세 조회 불가" in args[4]
+    assert "적용 코드: Y" in args[4]
+    assert "통상 약 2분간 단일가매매" in args[4]
     assert kwargs["metadata"]["stock_name"] == "제주반도체"
     assert kwargs["metadata"]["exchange"] == "KOSDAQ"
+
+
+@pytest.mark.asyncio
+async def test_stock_vi_alert_includes_type_prices_and_times_from_vi_status():
+    operator_alert = AsyncMock()
+    vi_status_provider = AsyncMock(return_value=[{
+        "mksc_shrn_iscd": "080220",
+        "vi_cls_code": "Y",
+        "bsop_date": "20261113",
+        "cntg_vi_hour": "122315",
+        "vi_cncl_hour": "",
+        "vi_kind_code": "1",
+        "vi_prc": "61100",
+        "vi_stnd_prc": "67900",
+        "vi_dprt": "-10.01",
+        "vi_dmc_stnd_prc": "0",
+        "vi_dmc_dprt": "0.00",
+        "vi_count": "2",
+    }])
+    stock_code_repository = MagicMock()
+    stock_code_repository.get_name_by_code.return_value = "제주반도체"
+    stock_code_repository.get_market_by_code.return_value = "KOSDAQ"
+    service = MarketStatusAlertService(
+        operator_alert_service=operator_alert,
+        stock_code_repository=stock_code_repository,
+        vi_status_provider=vi_status_provider,
+        logger=MagicMock(),
+    )
+
+    await service.on_market_status({
+        "유가증권단축종목코드": "080220",
+        "VI적용구분코드": "Y",
+    })
+
+    vi_status_provider.assert_awaited_once_with("080220", "20261113")
+    message = operator_alert.report.await_args.args[4]
+    metadata = operator_alert.report.await_args.kwargs["metadata"]
+    assert "VI 유형: 하락 정적 VI" in message
+    assert "발동: 12:23:15 / 발동가 61,100원" in message
+    assert "기준가: 67,900원 / 괴리율 -10.01%" in message
+    assert "상태: 발동 중 (통상 약 2분간 단일가매매)" in message
+    assert "당일 발동: 2회" in message
+    assert metadata["vi_status"]["vi_kind_code"] == "1"
+
+
+@pytest.mark.asyncio
+async def test_stock_vi_alert_falls_back_when_vi_status_lookup_fails():
+    operator_alert = AsyncMock()
+    vi_status_provider = AsyncMock(side_effect=RuntimeError("조회 실패"))
+    service = MarketStatusAlertService(
+        operator_alert_service=operator_alert,
+        vi_status_provider=vi_status_provider,
+        logger=MagicMock(),
+    )
+
+    await service.on_market_status({
+        "유가증권단축종목코드": "080220",
+        "VI적용구분코드": "Y",
+        "거래소구분코드": "KRX",
+    })
+
+    message = operator_alert.report.await_args.args[4]
+    assert "VI 유형: 상세 조회 불가" in message
+    assert "적용 코드: Y" in message
 
 
 @pytest.mark.asyncio

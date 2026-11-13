@@ -123,6 +123,35 @@ def mock_quotations():
 
 
 @pytest.mark.asyncio
+async def test_get_vi_status_uses_official_endpoint_and_filters(mock_quotations):
+    expected = ResCommonResponse(
+        rt_cd=ErrorCode.SUCCESS.value,
+        msg1="정상",
+        data={"output": [{"mksc_shrn_iscd": "080220"}]},
+    )
+    mock_quotations.call_api = AsyncMock(return_value=expected)
+
+    result = await mock_quotations.get_vi_status("080220", "20261113")
+
+    assert result is expected
+    mock_quotations.call_api.assert_awaited_once_with(
+        "GET",
+        "/uapi/domestic-stock/v1/quotations/inquire-vi-status",
+        params={
+            "FID_DIV_CLS_CODE": "0",
+            "FID_COND_SCR_DIV_CODE": "20139",
+            "FID_MRKT_CLS_CODE": "0",
+            "FID_INPUT_ISCD": "080220",
+            "FID_RANK_SORT_CLS_CODE": "0",
+            "FID_INPUT_DATE_1": "20261113",
+            "FID_TRGT_CLS_CODE": "",
+            "FID_TRGT_EXLS_CLS_CODE": "",
+        },
+        retry_count=1,
+    )
+
+
+@pytest.mark.asyncio
 async def test_get_price_summary(mock_quotations):
     # 1. ResStockFullInfoApiOutput 객체 생성 (dict처럼 감싸기 위함)
     # 필수 필드를 모두 채우기 위해 make_call_api_response 로직과 유사하게 생성하거나

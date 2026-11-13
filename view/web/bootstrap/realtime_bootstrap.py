@@ -66,6 +66,7 @@ class RealtimeBootstrap:
                 operator_alert_service=ctx.operator_alert_service,
                 notification_service=ctx.notification_service,
                 stock_code_repository=ctx.stock_code_repository,
+                vi_status_provider=ctx.broker.get_vi_status,
                 logger=ctx.logger,
             )
             if market_status_enabled
