@@ -17,6 +17,7 @@ from services.strategy_profitability_gate_service import (
 
 _QUALITY_FILE_PATTERN = re.compile(r"replay_quality_(\d{8})\.json$")
 _MISSING_CONFIG_HASH = "<missing>"
+_CURRENT_QUALITY_CONTRACT_FIELD = "program_intraday_db_coverage_pct"
 
 
 def build_strategy_validation_readiness(
@@ -129,7 +130,10 @@ def _capture_readiness(replay_dir: Path) -> dict[str, Any]:
             except (OSError, UnicodeError, json.JSONDecodeError):
                 error_count += 1
                 continue
-            if payload.get("valid_for_backtest") is True:
+            if (
+                payload.get("valid_for_backtest") is True
+                and payload.get(_CURRENT_QUALITY_CONTRACT_FIELD) is not None
+            ):
                 valid_dates.append(date)
 
     return {
