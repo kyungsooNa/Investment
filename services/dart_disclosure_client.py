@@ -45,6 +45,7 @@ class DartApiError(RuntimeError):
 
 class DartDisclosureClient:
     LIST_URL = "https://opendart.fss.or.kr/api/list.json"
+    FINANCIAL_URL = "https://opendart.fss.or.kr/api/fnlttSinglAcntAll.json"
     MAIN_URL = "https://dart.fss.or.kr/dsaf001/main.do"
     VIEWER_URL = "https://dart.fss.or.kr/report/viewer.do"
 
@@ -148,6 +149,102 @@ class DartDisclosureClient:
             return await fetch(self._http_client)
         async with httpx.AsyncClient(timeout=self._timeout_sec) as client:
             return await fetch(client)
+
+    async def fetch_periodic_financial_summary(
+        self, disclosure: DartDisclosure
+    ) -> str:
+        """정기보고서의 핵심 손익을 OpenDART 재무제표 API에서 짧게 추출한다."""
+        report_code = self._periodic_report_code(disclosure.report_name)
+        year_match = re.search(r"20\d{2}", str(disclosure.report_name or ""))
+        business_year = (
+            year_match.group(0)
+            if year_match
+            else str(disclosure.receipt_date or "")[:4]
+        )
+        if not report_code or len(business_year) != 4 or not disclosure.corp_code:
+            return ""
+
+        params = {
+            "crtfc_key": self._api_key,
+            "corp_code": disclosure.corp_code,
+            "bsns_year": business_year,
+            "reprt_code": report_code,
+            "fs_div": "CFS",
+        }
+
+        async def fetch(client) -> dict:
+            response = await client.get(
+                self.FINANCIAL_URL,
+                params=params,
+                timeout=self._timeout_sec,
+            )
+            response.raise_for_status()
+            return response.json()
+
+        if self._http_client is not None:
+            payload = await fetch(self._http_client)
+        else:
+            async with httpx.AsyncClient(timeout=self._timeout_sec) as client:
+                payload = await fetch(client)
+
+        status = str(payload.get("status") or "")
+        if status == "013":
+            return ""
+        if status != "000":
+            raise DartApiError(status, payload.get("message", ""))
+        return self._format_financial_summary(payload.get("list") or [], report_code)
+
+    @staticmethod
+    def _periodic_report_code(report_name: str) -> str:
+        name = str(report_name or "")
+        if "사업보고서" in name:
+            return "11011"
+        if "반기보고서" in name:
+            return "11012"
+        if "분기보고서" in name:
+            return "11013" if re.search(r"\.0?3\D", name) else "11014"
+        return ""
+
+    @staticmethod
+    def _format_financial_summary(rows: list[dict], report_code: str) -> str:
+        account_ids = (
+            "ifrs-full_Revenue",
+            "dart_OperatingIncomeLoss",
+            "ifrs-full_ProfitLoss",
+        )
+        income_rows = [
+            row for row in rows if str(row.get("sj_div") or "") in {"IS", "CIS"}
+        ]
+        by_id = {str(row.get("account_id") or ""): row for row in income_rows}
+        selected = [by_id[account_id] for account_id in account_ids if account_id in by_id]
+        if not selected:
+            return ""
+
+        current_label = {
+            "11011": "당기",
+            "11012": "당반기",
+            "11013": "당분기",
+            "11014": "당분기",
+        }[report_code]
+
+        def amount(value) -> str:
+            text = str(value or "").replace(",", "").strip()
+            try:
+                return f"{int(text):,}원"
+            except ValueError:
+                return "-"
+
+        lines = ["[OpenDART 핵심 재무실적]"]
+        for row in selected:
+            values = [f"{current_label} {amount(row.get('thstrm_amount'))}"]
+            if row.get("thstrm_add_amount") not in (None, ""):
+                values.append(f"누적 {amount(row.get('thstrm_add_amount'))}")
+            if row.get("frmtrm_q_amount") not in (None, ""):
+                values.append(f"전년 동기 {amount(row.get('frmtrm_q_amount'))}")
+            if row.get("frmtrm_add_amount") not in (None, ""):
+                values.append(f"전년 누적 {amount(row.get('frmtrm_add_amount'))}")
+            lines.append(f"{row.get('account_nm') or row.get('account_id')}: " + "; ".join(values))
+        return "\n".join(lines)
 
     async def _request(self, client, params):
         last_error = None

@@ -4,6 +4,7 @@ import pytest
 
 from services.dart_disclosure_client import (
     DartApiError,
+    DartDisclosure,
     DartDisclosureClient,
 )
 
@@ -210,6 +211,71 @@ async def test_fetch_disclosure_text_stops_once_the_char_budget_is_reached():
     text = await client.fetch_disclosure_text("20260720000120", max_chars=100)
 
     assert len(text) <= 100
+
+
+async def test_fetch_periodic_financial_summary_prioritizes_core_results():
+    http_client = AsyncMock()
+    http_client.get.return_value = _response({
+        "status": "000",
+        "message": "정상",
+        "list": [
+            {
+                "sj_div": "CIS", "account_id": "ifrs-full_Revenue", "account_nm": "수익",
+                "thstrm_nm": "제 27 기 3분기", "thstrm_amount": "346130681010",
+                "thstrm_add_amount": "816540661494",
+                "frmtrm_q_nm": "제 26 기 3분기", "frmtrm_q_amount": "110951148841",
+                "frmtrm_add_amount": "210458327548",
+            },
+            {
+                "sj_div": "CIS", "account_id": "dart_OperatingIncomeLoss", "account_nm": "영업이익(손실)",
+                "thstrm_nm": "제 27 기 3분기", "thstrm_amount": "159882519960",
+                "thstrm_add_amount": "348867044018", "frmtrm_q_amount": "13901794568",
+                "frmtrm_add_amount": "21939153135",
+            },
+            {
+                "sj_div": "CIS", "account_id": "ifrs-full_ProfitLoss", "account_nm": "당기순이익(손실)",
+                "thstrm_amount": "67266135257", "thstrm_add_amount": "260165413095",
+                "frmtrm_q_amount": "22689908827", "frmtrm_add_amount": "24395963328",
+            },
+            {
+                "sj_div": "CF", "account_id": "ifrs-full_ProfitLoss",
+                "account_nm": "당기순이익(손실)", "thstrm_amount": "260165413095",
+            },
+        ],
+    })
+    client = DartDisclosureClient("secret", http_client=http_client)
+    disclosure = DartDisclosure(
+        corp_class="K", corp_name="제주반도체", corp_code="00447487",
+        stock_code="080220", report_name="분기보고서 (2026.09)",
+        receipt_no="20261113000183", filer_name="제주반도체",
+        receipt_date="20261113",
+    )
+
+    summary = await client.fetch_periodic_financial_summary(disclosure)
+
+    assert "당분기 346,130,681,010원" in summary
+    assert "누적 816,540,661,494원" in summary
+    assert "영업이익(손실): 당분기 159,882,519,960원" in summary
+    assert "당기순이익(손실): 당분기 67,266,135,257원" in summary
+    params = http_client.get.await_args.kwargs["params"]
+    assert params["corp_code"] == "00447487"
+    assert params["bsns_year"] == "2026"
+    assert params["reprt_code"] == "11014"
+    assert params["fs_div"] == "CFS"
+
+
+async def test_fetch_periodic_financial_summary_skips_non_periodic_report():
+    http_client = AsyncMock()
+    client = DartDisclosureClient("secret", http_client=http_client)
+    disclosure = DartDisclosure(
+        corp_class="K", corp_name="제주반도체", corp_code="00447487",
+        stock_code="080220", report_name="단일판매ㆍ공급계약체결",
+        receipt_no="20261113000183", filer_name="제주반도체",
+        receipt_date="20261113",
+    )
+
+    assert await client.fetch_periodic_financial_summary(disclosure) == ""
+    http_client.get.assert_not_awaited()
 
 
 async def test_network_errors_are_retried_once_then_reported_without_the_key():

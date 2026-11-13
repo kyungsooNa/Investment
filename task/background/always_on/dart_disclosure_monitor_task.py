@@ -379,6 +379,18 @@ class DartDisclosureMonitorTask(SchedulableTask):
                 f"{disclosure.receipt_no}"
             )
             return None
+        try:
+            financial_summary = await self._client.fetch_periodic_financial_summary(
+                disclosure
+            )
+        except Exception as exc:
+            financial_summary = ""
+            self._logger.warning(
+                f"{self.task_name}: 핵심 재무실적 조회 실패 — "
+                f"{disclosure.receipt_no}: {type(exc).__name__}: {exc}"
+            )
+        if financial_summary:
+            document_text = f"{financial_summary}\n\n{document_text}"
         return await self._ai_analyzer.analyze(
             disclosure, preliminary, document_text
         )
