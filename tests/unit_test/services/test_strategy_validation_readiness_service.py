@@ -1,5 +1,6 @@
 import json
 
+from config.config_loader import StrategyProfitabilityGateConfig as AppProfitabilityGateConfig
 from services.strategy_profitability_gate_service import StrategyProfitabilityGateConfig
 from services.strategy_validation_readiness_service import build_strategy_validation_readiness
 
@@ -75,6 +76,18 @@ def test_build_readiness_reports_malformed_quality_files_without_failing(tmp_pat
     assert result["summary"]["strategy_count"] == 0
     assert result["summary"]["quality_file_error_count"] == 1
     assert result["summary"]["valid_capture_days"] == 0
+
+
+def test_build_readiness_accepts_runtime_app_profitability_config(tmp_path):
+    """운영 AppConfig의 gate 설정도 서비스 평가 설정과 같은 필드를 제공해야 한다."""
+    result = build_strategy_validation_readiness(
+        [_record("alpha", config_hash="runtime123")],
+        AppProfitabilityGateConfig(),
+        replay_dir=tmp_path,
+    )
+
+    assert result["summary"]["strategy_count"] == 1
+    assert result["strategies"][0]["status"] == "insufficient_sample"
 
 
 
