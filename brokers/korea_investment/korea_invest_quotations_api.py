@@ -91,6 +91,30 @@ class KoreaInvestApiQuotations(KoreaInvestApiBase):
                 data=None
             )
 
+    async def get_vi_status(
+        self,
+        stock_code: str,
+        business_date: str,
+    ) -> ResCommonResponse:
+        """종목의 당일 VI 발동 현황을 조회한다."""
+        params = {
+            "FID_DIV_CLS_CODE": "0",
+            "FID_COND_SCR_DIV_CODE": "20139",
+            "FID_MRKT_CLS_CODE": "0",
+            "FID_INPUT_ISCD": stock_code,
+            "FID_RANK_SORT_CLS_CODE": "0",
+            "FID_INPUT_DATE_1": business_date,
+            "FID_TRGT_CLS_CODE": "",
+            "FID_TRGT_EXLS_CLS_CODE": "",
+        }
+        with self._headers.temp(tr_id="FHPST01390000"):
+            return await self.call_api(
+                "GET",
+                "/uapi/domestic-stock/v1/quotations/inquire-vi-status",
+                params=params,
+                retry_count=1,
+            )
+
     async def get_current_price(self, stock_code, exchange: Exchange = Exchange.KRX) -> ResCommonResponse:
         """
         현재가를 조회합니다. API 원본 응답을 ResCommonResponse의 data 필드에 담아 반환.

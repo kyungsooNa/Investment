@@ -743,12 +743,14 @@ class KoreaInvestWebSocketAPI:
         """H0STMKO0/H0NXMKO0/H0UNMKO0 (국내주식 장운영정보)를 파싱합니다."""
         values = data_str.split('^')
         body_has_stock_code = (
-            len(values) >= 11
+            len(values) >= 10
             and values[0].strip().isdigit()
             and len(values[0].strip()) == 6
         )
         if include_stock_code or body_has_stock_code:
-            menulist = "유가증권단축종목코드|거래정지여부|거래정지사유내용|장운영구분코드|예상장운영구분코드|임의연장구분코드|동시호가배분처리구분코드|종목상태구분코드|VI적용구분코드|시간외단일가VI적용구분코드|거래소구분코드"
+            menulist = "유가증권단축종목코드|거래정지여부|거래정지사유내용|장운영구분코드|예상장운영구분코드|임의연장구분코드|동시호가배분처리구분코드|종목상태구분코드|VI적용구분코드|시간외단일가VI적용구분코드"
+            if len(values) >= 11:
+                menulist += "|거래소구분코드"
         else:
             menulist = "거래정지여부|거래정지사유내용|장운영구분코드|예상장운영구분코드|임의연장구분코드|동시호가배분처리구분코드|종목상태구분코드|VI적용구분코드|시간외단일가VI적용구분코드|거래소구분코드"
         keys = menulist.split('|')

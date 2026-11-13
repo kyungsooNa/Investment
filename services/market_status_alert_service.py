@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, Awaitable, Callable, Optional
 
 from common.operator_alert_types import AlertSource
 
@@ -27,11 +27,15 @@ class MarketStatusAlertService:
         operator_alert_service=None,
         notification_service=None,
         stock_code_repository=None,
+        vi_status_provider: Optional[
+            Callable[[str, str], Awaitable[Any]]
+        ] = None,
         logger: Optional[logging.Logger] = None,
     ) -> None:
         self._operator_alert_service = operator_alert_service
         self._notification_service = notification_service
         self._stock_code_repository = stock_code_repository
+        self._vi_status_provider = vi_status_provider
         self._logger = logger or logging.getLogger(__name__)
         self._active_keys_by_code: dict[str, set[str]] = {}
         self._active_index_keys_by_code: dict[str, set[str]] = {}
@@ -62,8 +66,13 @@ class MarketStatusAlertService:
         severity = self._severity_for_event(event_type)
         event_name = self._event_name(event_type)
         title = f"{self._direction_label(direction)} {event_name} 감지".strip()
+        vi_status = (
+            await self._get_vi_status(code)
+            if event_type == "stock_vi"
+            else None
+        )
         message = self._format_event_message(
-            event_type, exchange, code, stock_name, reason, data
+            event_type, exchange, code, stock_name, reason, data, vi_status
         )
         metadata = {
             "event_type": event_type,
@@ -74,6 +83,7 @@ class MarketStatusAlertService:
             "direction": direction,
             "vi_code": str(data.get("VI적용구분코드") or ""),
             "after_hours_vi_code": str(data.get("시간외단일가VI적용구분코드") or ""),
+            "vi_status": vi_status,
             "market_status": dict(data),
             "telegram_channel": "report",
         }
@@ -336,12 +346,123 @@ class MarketStatusAlertService:
         stock_name: str,
         reason: str,
         data: dict[str, Any],
+        vi_status: Optional[dict[str, Any]] = None,
     ) -> str:
         stock_label = f"{stock_name}({code})" if stock_name else code
         if event_type == "stock_vi":
             vi_code = str(data.get("VI적용구분코드") or "").strip()
-            return f"{exchange} {stock_label}: VI적용구분코드={vi_code or 'UNKNOWN'}"
+            lines = [f"{exchange} {stock_label}"]
+            if vi_status:
+                static_base = MarketStatusAlertService._positive_number(
+                    vi_status.get("vi_stnd_prc")
+                )
+                dynamic_base = MarketStatusAlertService._positive_number(
+                    vi_status.get("vi_dmc_stnd_prc")
+                )
+                vi_type = (
+                    "정적·동적 VI"
+                    if static_base and dynamic_base
+                    else "정적 VI"
+                    if static_base
+                    else "동적 VI"
+                    if dynamic_base
+                    else "VI"
+                )
+                rate = MarketStatusAlertService._number(vi_status.get("vi_dprt"))
+                if not static_base:
+                    rate = MarketStatusAlertService._number(
+                        vi_status.get("vi_dmc_dprt")
+                    )
+                direction = "상승" if rate is not None and rate > 0 else "하락" if rate is not None and rate < 0 else ""
+                lines.append(f"VI 유형: {direction} {vi_type}".replace("  ", " "))
+
+                trigger_time = MarketStatusAlertService._format_hhmmss(
+                    vi_status.get("cntg_vi_hour")
+                )
+                trigger_price = MarketStatusAlertService._format_won(
+                    vi_status.get("vi_prc")
+                )
+                if trigger_time or trigger_price:
+                    details = [value for value in (trigger_time, trigger_price) if value]
+                    lines.append(f"발동: {' / 발동가 '.join(details)}")
+
+                base_price = static_base or dynamic_base
+                base_text = MarketStatusAlertService._format_won(base_price)
+                rate_text = f"{rate:+.2f}%" if rate is not None else ""
+                if base_text or rate_text:
+                    details = [value for value in (base_text, rate_text) if value]
+                    lines.append(f"기준가: {' / 괴리율 '.join(details)}")
+
+                release_time = MarketStatusAlertService._format_hhmmss(
+                    vi_status.get("vi_cncl_hour")
+                )
+                if release_time:
+                    lines.append(f"상태: 해제 ({release_time})")
+                else:
+                    lines.append("상태: 발동 중 (통상 약 2분간 단일가매매)")
+                count = MarketStatusAlertService._positive_number(
+                    vi_status.get("vi_count")
+                )
+                if count:
+                    lines.append(f"당일 발동: {int(count):,}회")
+            else:
+                lines.extend([
+                    "VI 유형: 상세 조회 불가 (실시간 코드는 적용 여부만 제공)",
+                    f"적용 코드: {vi_code or 'UNKNOWN'}",
+                    "상태: VI 발동 (통상 약 2분간 단일가매매)",
+                ])
+            return "\n".join(lines)
         return f"{exchange} {stock_label}: {reason or '장운영정보 특수 상태 감지'}"
+
+    async def _get_vi_status(self, code: str) -> Optional[dict[str, Any]]:
+        if self._vi_status_provider is None or code == "UNKNOWN":
+            return None
+        business_date = datetime.now().strftime("%Y%m%d")
+        try:
+            response = await self._vi_status_provider(code, business_date)
+            if hasattr(response, "data"):
+                response = response.data
+            if isinstance(response, dict) and "output" in response:
+                response = response.get("output")
+            rows = response if isinstance(response, list) else [response]
+            candidates = [
+                row for row in rows
+                if isinstance(row, dict)
+                and str(row.get("mksc_shrn_iscd") or code).zfill(6) == code
+            ]
+            if not candidates:
+                return None
+            return max(
+                candidates,
+                key=lambda row: str(row.get("cntg_vi_hour") or ""),
+            )
+        except Exception as exc:
+            self._logger.warning("VI 상세 현황 조회 실패(%s): %s", code, exc)
+            return None
+
+    @staticmethod
+    def _number(value: Any) -> Optional[float]:
+        try:
+            return float(str(value).replace(",", ""))
+        except (TypeError, ValueError):
+            return None
+
+    @classmethod
+    def _positive_number(cls, value: Any) -> Optional[float]:
+        number = cls._number(value)
+        return number if number is not None and number > 0 else None
+
+    @staticmethod
+    def _format_hhmmss(value: Any) -> str:
+        digits = str(value or "").strip()
+        if len(digits) != 6 or not digits.isdigit():
+            return ""
+        return f"{digits[:2]}:{digits[2:4]}:{digits[4:]}"
+
+    @classmethod
+    def _format_won(cls, value: Any) -> str:
+        number = cls._number(value)
+        return f"{int(number):,}원" if number is not None else ""
 
     def _stock_identity(self, code: str, exchange: str) -> tuple[str, str]:
         stock_name = ""

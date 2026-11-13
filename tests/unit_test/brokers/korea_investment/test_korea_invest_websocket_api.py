@@ -2834,6 +2834,25 @@ def test_handle_unified_market_status_accepts_body_that_includes_stock_code(
     assert result["data"]["거래소구분코드"] == "KOSDAQ"
 
 
+def test_handle_unified_market_status_parses_live_ten_field_frame(
+    websocket_api_instance,
+):
+    """실서버 H0UNMKO0은 tr_key와 별개로 본문 첫 칸에 종목코드를 보낸다."""
+    api = websocket_api_instance
+    api.on_realtime_message_callback = MagicMock()
+
+    api._handle_websocket_message(
+        "0|H0UNMKO0|001|080220^N^(null)^AB1^112^^^55^N^"
+    )
+
+    result = api.on_realtime_message_callback.call_args.args[0]
+    assert result["data"]["유가증권단축종목코드"] == "080220"
+    assert result["data"]["거래정지여부"] == "N"
+    assert result["data"]["장운영구분코드"] == "AB1"
+    assert result["data"]["종목상태구분코드"] == "55"
+    assert result["data"]["VI적용구분코드"] == "N"
+
+
 def test_handle_websocket_message_krx_market_status_success(websocket_api_instance):
     api = websocket_api_instance
     api.on_realtime_message_callback = MagicMock()

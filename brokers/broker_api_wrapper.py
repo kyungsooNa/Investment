@@ -139,6 +139,10 @@ class BrokerAPIWrapper:
         """현재가를 조회합니다 (KoreaInvestApiQuotations 위임)."""
         return await self._client.get_current_price(code, exchange=exchange)
 
+    async def get_vi_status(self, stock_code: str, business_date: str) -> ResCommonResponse:
+        """종목의 당일 VI 발동 현황을 조회합니다."""
+        return await self._client.get_vi_status(stock_code, business_date)
+
     async def get_stock_conclusion(self, code: str, exchange: Exchange = Exchange.KRX) -> ResCommonResponse:
         """주식 체결(체결강도) 정보를 조회합니다."""
         return await self._client.get_stock_conclusion(code, exchange=exchange)
