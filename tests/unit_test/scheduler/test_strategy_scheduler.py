@@ -3283,6 +3283,24 @@ class TestStrategyScheduler(unittest.IsolatedAsyncioTestCase):
         
         mock_notifier.emit.assert_not_awaited()
 
+    async def test_execute_buy_signal_dry_run_notification_is_explicitly_virtual(self):
+        """dry-run 성공 알림은 실제 주문 체결로 오해되지 않도록 가상매매임을 표시한다."""
+        scheduler, _, oes, _, _ = self._make_scheduler(dry_run=True)
+        mock_notifier = AsyncMock()
+        scheduler._notification_service = mock_notifier
+
+        signal = TradeSignal(
+            code="114800", name="KODEX 인버스", action="BUY",
+            price=1258, qty=238, reason="베어 레짐 진입", strategy_name="인버스ETF레짐",
+        )
+        await scheduler._execute_signal(signal)
+
+        oes.handle_place_buy_order.assert_not_awaited()
+        mock_notifier.emit.assert_awaited_once()
+        args, _ = mock_notifier.emit.await_args
+        self.assertEqual(args[2], "[인버스ETF레짐] KODEX 인버스 가상매수 성공")
+        self.assertIn("상태: 가상체결 기록(증권사 주문 미전송)", args[3])
+
     async def test_execute_sell_signal_notification_includes_estimated_return_rate(self):
         """실전 매도 알림은 체결 확정 전에도 보유 매수가 기준 수익률을 포함한다."""
         scheduler, vm, oes, _, _ = self._make_scheduler(dry_run=False)
