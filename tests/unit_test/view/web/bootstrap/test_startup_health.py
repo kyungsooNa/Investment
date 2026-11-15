@@ -52,6 +52,47 @@ async def test_resolves_previous_alerts_when_startup_is_healthy():
 
 
 @pytest.mark.asyncio
+async def test_resolves_stale_global_kill_switch_alert_when_state_is_clear():
+    svc = _alert_service()
+    repo = SimpleNamespace(is_minimal_fallback=False)
+    kill_switch = MagicMock()
+    kill_switch.get_status.return_value = {"is_tripped": False}
+
+    await report_startup_health(
+        svc,
+        repo,
+        services_ready=True,
+        kill_switch_service=kill_switch,
+    )
+
+    svc.resolve.assert_any_await(
+        AlertSource.KILL_SWITCH,
+        "kill_switch:global",
+        "Kill Switch 상태 정상",
+    )
+
+
+@pytest.mark.asyncio
+async def test_keeps_global_kill_switch_alert_when_state_is_tripped():
+    svc = _alert_service()
+    repo = SimpleNamespace(is_minimal_fallback=False)
+    kill_switch = MagicMock()
+    kill_switch.get_status.return_value = {"is_tripped": True}
+
+    await report_startup_health(
+        svc,
+        repo,
+        services_ready=True,
+        kill_switch_service=kill_switch,
+    )
+
+    assert not any(
+        call.args[:2] == (AlertSource.KILL_SWITCH, "kill_switch:global")
+        for call in svc.resolve.await_args_list
+    )
+
+
+@pytest.mark.asyncio
 async def test_without_alert_service_is_noop():
     await report_startup_health(None, SimpleNamespace(is_minimal_fallback=True), services_ready=False)
 

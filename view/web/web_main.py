@@ -148,6 +148,7 @@ async def lifespan(app: FastAPI):
         ctx.operator_alert_service,
         ctx.stock_code_repository,
         services_ready=services_ready,
+        kill_switch_service=ctx.kill_switch_service,
         logger=ctx.logger,
     )
 
