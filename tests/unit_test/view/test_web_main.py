@@ -115,6 +115,7 @@ async def test_lifespan_reports_startup_health_to_operator_alerts(
         mock_ctx.operator_alert_service,
         mock_ctx.stock_code_repository,
         services_ready=services_ready,
+        kill_switch_service=mock_ctx.kill_switch_service,
         logger=mock_ctx.logger,
     )
 

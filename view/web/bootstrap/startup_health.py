@@ -12,7 +12,14 @@ STOCK_CODE_DB_KEY = "startup:stock_code_db"
 BROKER_KEY = "startup:broker"
 
 
-async def report_startup_health(operator_alert_service, stock_code_repository, *, services_ready: bool, logger=None) -> None:
+async def report_startup_health(
+    operator_alert_service,
+    stock_code_repository,
+    *,
+    services_ready: bool,
+    kill_switch_service=None,
+    logger=None,
+) -> None:
     if operator_alert_service is None:
         return
     try:
@@ -37,6 +44,15 @@ async def report_startup_health(operator_alert_service, stock_code_repository, *
             )
         else:
             await operator_alert_service.resolve(AlertSource.STARTUP, BROKER_KEY, "브로커 초기화 성공")
+
+        if kill_switch_service is not None:
+            kill_switch_status = kill_switch_service.get_status()
+            if not kill_switch_status.get("is_tripped", False):
+                await operator_alert_service.resolve(
+                    AlertSource.KILL_SWITCH,
+                    "kill_switch:global",
+                    "Kill Switch 상태 정상",
+                )
     except Exception as e:
         if logger:
             logger.warning(f"기동 상태 운영자 알림 기록 실패: {e}")

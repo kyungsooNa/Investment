@@ -1,3 +1,5 @@
+from datetime import datetime
+
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
@@ -66,6 +68,7 @@ async def test_stock_vi_alert_enriches_missing_exchange_and_stock_name():
 
 @pytest.mark.asyncio
 async def test_stock_vi_alert_includes_type_prices_and_times_from_vi_status():
+    expected_business_date = datetime.now().strftime("%Y%m%d")
     operator_alert = AsyncMock()
     vi_status_provider = AsyncMock(return_value=[{
         "mksc_shrn_iscd": "080220",
@@ -96,7 +99,7 @@ async def test_stock_vi_alert_includes_type_prices_and_times_from_vi_status():
         "VI적용구분코드": "Y",
     })
 
-    vi_status_provider.assert_awaited_once_with("080220", "20261113")
+    vi_status_provider.assert_awaited_once_with("080220", expected_business_date)
     message = operator_alert.report.await_args.args[4]
     metadata = operator_alert.report.await_args.kwargs["metadata"]
     assert "VI 유형: 하락 정적 VI" in message
