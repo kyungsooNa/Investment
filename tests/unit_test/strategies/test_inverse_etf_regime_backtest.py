@@ -34,11 +34,42 @@ def _up_index(n=40, start=10000.0, step=100.0):
     return _bars([start + step * k for k in range(n)])
 
 
+def _bt(**kwargs):
+    """확인 필터 외의 단일 계약을 검증할 때 사용하는 백테스트."""
+    return InverseEtfRegimeBacktest(
+        smart_money_filter_enabled=False,
+        semiconductor_filter_enabled=False,
+        **kwargs,
+    )
+
+
+def _confirmation_inputs(inverse_bars):
+    dates = [bar["date"] for bar in inverse_bars]
+    investor_flows = [
+        {"date": date, "foreign": -100.0, "institution": -50.0}
+        for date in dates
+    ]
+    semiconductor_bars = {
+        code: [
+            {
+                "date": date,
+                "open": 100.0,
+                "high": 101.0,
+                "low": 97.0,
+                "close": 99.0 - k,
+            }
+            for k, date in enumerate(dates)
+        ]
+        for code in ("005930", "000660")
+    }
+    return investor_flows, semiconductor_bars
+
+
 # ── 진입 게이트 ────────────────────────────────────────────────────
 
 def test_no_entry_when_index_not_bear():
     """지수가 상승추세면 인버스 ETF가 올라도 진입하지 않는다."""
-    bt = InverseEtfRegimeBacktest()
+    bt = _bt()
     index = _up_index()
     inverse = _bars([5000.0 + 50 * k for k in range(40)])  # 인버스도 상승
     result = bt.run(index, inverse)
@@ -47,7 +78,7 @@ def test_no_entry_when_index_not_bear():
 
 def test_no_entry_when_inverse_below_trend_ma():
     """지수가 bear여도 인버스 ETF가 추세 미확인(종가 < MA)이면 진입하지 않는다."""
-    bt = InverseEtfRegimeBacktest()
+    bt = _bt()
     index = _down_index()
     inverse = _bars([5000.0 - 50 * k for k in range(40)])  # 인버스 하락 → MA 아래
     result = bt.run(index, inverse)
@@ -56,7 +87,7 @@ def test_no_entry_when_inverse_below_trend_ma():
 
 def test_entry_when_bear_and_inverse_uptrend():
     """지수 bear + 인버스 ETF 상승추세(종가 > MA)면 진입한다."""
-    bt = InverseEtfRegimeBacktest()
+    bt = _bt()
     index = _down_index()
     inverse = _bars([5000.0 + 50 * k for k in range(40)])
     result = bt.run(index, inverse)
@@ -66,7 +97,7 @@ def test_entry_when_bear_and_inverse_uptrend():
 
 def test_no_entry_without_intraday_trend_confirmation():
     """일봉 상승추세여도 종가가 시가 이하면 최신 라이브 진입 조건상 거부한다."""
-    bt = InverseEtfRegimeBacktest(trend_ma_period=5, regime_ma_period=5)
+    bt = _bt(trend_ma_period=5, regime_ma_period=5)
     closes = [5000.0 + 50 * k for k in range(12)]
     inverse = _bars(closes, opens=[close + 10 for close in closes])
 
@@ -77,7 +108,7 @@ def test_no_entry_without_intraday_trend_confirmation():
 
 def test_no_entry_without_positive_previous_day_return():
     """종가가 시가보다 높아도 전일 대비 상승이 아니면 진입하지 않는다."""
-    bt = InverseEtfRegimeBacktest(trend_ma_period=3, regime_ma_period=3)
+    bt = _bt(trend_ma_period=3, regime_ma_period=3)
     inverse = _bars(
         [5000, 5050, 5100, 5100],
         opens=[4990, 5040, 5090, 5090],
@@ -88,11 +119,78 @@ def test_no_entry_without_positive_previous_day_return():
     assert result["summary"]["total_trades"] == 0
 
 
+def test_confirmation_filters_fail_closed_without_historical_inputs():
+    """라이브 기본 필터 데이터가 없으면 과거 진입을 성공으로 간주하지 않는다."""
+    bt = InverseEtfRegimeBacktest(trend_ma_period=3, regime_ma_period=3)
+    inverse = _bars([5000.0 + 50 * k for k in range(8)])
+
+    result = bt.run(_down_index(n=8), inverse)
+
+    assert result["summary"]["total_trades"] == 0
+    assert result["confirmation_coverage"]["candidate_dates"] > 0
+    assert result["confirmation_coverage"]["fully_available_dates"] == 0
+
+
+def test_entry_when_smart_money_sells_and_both_semiconductors_are_bearish():
+    """외인+기관 순매도와 삼성전자·SK하이닉스 음봉이 모두 확인되면 진입한다."""
+    bt = InverseEtfRegimeBacktest(trend_ma_period=3, regime_ma_period=3)
+    inverse = _bars([5000.0 + 50 * k for k in range(8)])
+    investor_flows, semiconductor_bars = _confirmation_inputs(inverse)
+
+    result = bt.run(
+        _down_index(n=8),
+        inverse,
+        investor_flows=investor_flows,
+        semiconductor_bars=semiconductor_bars,
+    )
+
+    assert result["summary"]["total_trades"] >= 1
+    assert result["confirmation_coverage"]["fully_available_dates"] >= 1
+    assert result["confirmation_coverage"]["confirmed_dates"] >= 1
+
+
+def test_no_entry_when_foreign_and_institution_are_net_buying():
+    bt = InverseEtfRegimeBacktest(trend_ma_period=3, regime_ma_period=3)
+    inverse = _bars([5000.0 + 50 * k for k in range(8)])
+    investor_flows, semiconductor_bars = _confirmation_inputs(inverse)
+    for row in investor_flows:
+        row.update(foreign=200.0, institution=100.0)
+
+    result = bt.run(
+        _down_index(n=8),
+        inverse,
+        investor_flows=investor_flows,
+        semiconductor_bars=semiconductor_bars,
+    )
+
+    assert result["summary"]["total_trades"] == 0
+    assert result["confirmation_coverage"]["confirmed_dates"] == 0
+
+
+@pytest.mark.parametrize("code", ["005930", "000660"])
+def test_no_entry_when_a_semiconductor_is_not_bearish(code):
+    bt = InverseEtfRegimeBacktest(trend_ma_period=3, regime_ma_period=3)
+    inverse = _bars([5000.0 + 50 * k for k in range(8)])
+    investor_flows, semiconductor_bars = _confirmation_inputs(inverse)
+    for bar in semiconductor_bars[code]:
+        bar["close"] = bar["open"] + 1.0
+
+    result = bt.run(
+        _down_index(n=8),
+        inverse,
+        investor_flows=investor_flows,
+        semiconductor_bars=semiconductor_bars,
+    )
+
+    assert result["summary"]["total_trades"] == 0
+    assert result["confirmation_coverage"]["confirmed_dates"] == 0
+
+
 # ── 청산 ──────────────────────────────────────────────────────────
 
 def test_exit_on_regime_flip_to_non_bear():
     """보유 중 지수가 bear에서 이탈하면 종가 청산(reason=regime)."""
-    bt = InverseEtfRegimeBacktest(trend_ma_period=5, regime_ma_period=5)
+    bt = _bt(trend_ma_period=5, regime_ma_period=5)
     # 전반 하락(bear)에서 진입 → 후반 강한 상승으로 레짐 이탈
     idx_closes = [10000 - 100 * k for k in range(20)] + [8000 + 400 * k for k in range(20)]
     inv_closes = [5000 + 50 * k for k in range(20)] + [6000 - 10 * k for k in range(20)]
@@ -103,7 +201,7 @@ def test_exit_on_regime_flip_to_non_bear():
 
 def test_regime_exit_has_priority_over_same_day_stop():
     """라이브와 같이 레짐 해제를 같은 날의 가격 스탑보다 먼저 판정한다."""
-    bt = InverseEtfRegimeBacktest(
+    bt = _bt(
         stop_loss_pct=-5.0,
         trailing_stop_pct=None,
         trend_ma_period=3,
@@ -124,7 +222,7 @@ def test_regime_exit_has_priority_over_same_day_stop():
 
 def test_exit_on_intraday_trend_invalidation():
     """시가 아래이면서 전일 대비 -2% 이하이면 최신 라이브 로직대로 조기 청산한다."""
-    bt = InverseEtfRegimeBacktest(
+    bt = _bt(
         stop_loss_pct=-20.0,
         trailing_stop_pct=None,
         trend_ma_period=5,
@@ -144,7 +242,7 @@ def test_exit_on_intraday_trend_invalidation():
 
 def test_exit_on_hard_stop_with_gap_through():
     """하드 스탑: 저가가 스탑 이하로 갭다운하면 시가에 체결(보수)."""
-    bt = InverseEtfRegimeBacktest(stop_loss_pct=-5.0, trend_ma_period=5, regime_ma_period=5)
+    bt = _bt(stop_loss_pct=-5.0, trend_ma_period=5, regime_ma_period=5)
     index = _down_index(n=30)
     # 인버스: 상승추세로 진입 유도 후, 한 봉에서 시가가 스탑 아래로 급락(갭다운)
     inv_closes = [5000 + 50 * k for k in range(10)]
@@ -164,7 +262,7 @@ def test_exit_on_hard_stop_with_gap_through():
 
 def test_hard_stop_threshold_uses_net_return_after_cost():
     """라이브와 같이 비용 차감 후 -5%가 되는 가격에서 손절한다."""
-    bt = InverseEtfRegimeBacktest(
+    bt = _bt(
         stop_loss_pct=-5.0,
         trailing_stop_pct=None,
         trend_ma_period=3,
@@ -186,8 +284,8 @@ def test_hard_stop_threshold_uses_net_return_after_cost():
 
 def test_exit_on_trailing_stop():
     """트레일링 스톱: 이익 구간에서 고점 대비 하락 시 청산."""
-    bt = InverseEtfRegimeBacktest(stop_loss_pct=-20.0, trailing_stop_pct=8.0,
-                                  trend_ma_period=5, regime_ma_period=5)
+    bt = _bt(stop_loss_pct=-20.0, trailing_stop_pct=8.0,
+             trend_ma_period=5, regime_ma_period=5)
     index = _down_index(n=40)
     # 인버스: 진입 후 상승해 고점 형성 → -8% 하락
     inv_closes = [5000 + 50 * k for k in range(10)]  # 진입 유도
@@ -201,7 +299,7 @@ def test_exit_on_trailing_stop():
 
 def test_partial_profit_sells_half_and_trails_the_remainder():
     """+10%에서 절반을 익절하고 잔량 수익률을 최종 청산가와 가중 합산한다."""
-    bt = InverseEtfRegimeBacktest(
+    bt = _bt(
         stop_loss_pct=-20.0,
         trailing_stop_pct=8.0,
         take_profit_pct=10.0,
@@ -228,13 +326,13 @@ def test_partial_profit_sells_half_and_trails_the_remainder():
 
 def test_etf_cost_model_excludes_transaction_tax():
     """ETF 비용 기본값은 거래세(0.2%) 미포함 — 주식 round-trip(0.2%)보다 작아야 한다."""
-    bt = InverseEtfRegimeBacktest()
+    bt = _bt()
     assert bt.round_trip_cost_pct < 0.2
 
 
 def test_net_return_subtracts_round_trip_cost():
     """net = gross - round_trip_cost_pct 가 적용된다."""
-    bt = InverseEtfRegimeBacktest(round_trip_cost_pct=0.1, trend_ma_period=5, regime_ma_period=5)
+    bt = _bt(round_trip_cost_pct=0.1, trend_ma_period=5, regime_ma_period=5)
     index = _down_index(n=20)
     inv_closes = [5000 + 50 * k for k in range(8)] + [5500]  # 진입 후 종료까지 보유(terminal)
     inverse = _bars(inv_closes)
@@ -248,7 +346,7 @@ def test_net_return_subtracts_round_trip_cost():
 
 def test_summary_includes_max_drawdown():
     """요약에 max_drawdown_pct(거래 시퀀스 복리 자산곡선 기준)가 포함된다."""
-    bt = InverseEtfRegimeBacktest(trend_ma_period=5, regime_ma_period=5)
+    bt = _bt(trend_ma_period=5, regime_ma_period=5)
     index = _down_index(n=40)
     inverse = _bars([5000 + 50 * k for k in range(40)])
     summary = bt.run(index, inverse)["summary"]
@@ -257,7 +355,7 @@ def test_summary_includes_max_drawdown():
 
 
 def test_empty_summary_on_no_trades():
-    bt = InverseEtfRegimeBacktest()
+    bt = _bt()
     summary = bt.run(_up_index(), _bars([5000.0] * 40))["summary"]
     assert summary["total_trades"] == 0
     assert summary["max_drawdown_pct"] == 0.0
@@ -267,7 +365,7 @@ def test_empty_summary_on_no_trades():
 
 def test_run_periods_splits_by_date_window():
     """run_periods 는 라벨별 날짜 윈도우로 잘라 기간별 요약을 낸다."""
-    bt = InverseEtfRegimeBacktest(trend_ma_period=3, regime_ma_period=3)
+    bt = _bt(trend_ma_period=3, regime_ma_period=3)
     index = _bars([10000 - 100 * k for k in range(40)], start_day=1)
     inverse = _bars([5000 + 50 * k for k in range(40)], start_day=1)
     periods = [

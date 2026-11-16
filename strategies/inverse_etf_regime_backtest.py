@@ -11,7 +11,9 @@
   MA-크로스+하락기울기 proxy로 단순화한다(외부 의존 없이 재현 가능).
 
 진입: 해당일 지수 bear **AND** 인버스 종가 > 인버스 trend_ma_period MA
-  **AND** 종가 > 시가 **AND** 전일 대비 상승 → 종가 진입.
+  **AND** 종가 > 시가 **AND** 전일 대비 상승
+  **AND** 외국인+기관 순매도 **AND** 삼성전자·SK하이닉스 모두 음봉·전일 대비 하락
+  → 종가 진입. 확인 데이터가 없으면 라이브와 같이 fail-closed 한다.
   라이브의 실제 매도 1호가는 과거 일봉에 없으므로 종가로 근사하며, 슬리피지는 비용에 포함한다.
 
 청산(라이브 우선순위):
@@ -40,6 +42,10 @@ class InverseEtfRegimeBacktest:
         take_profit_pct: Optional[float] = 12.0,
         partial_sell_ratio: float = 0.5,
         round_trip_cost_pct: float = 0.1,
+        smart_money_filter_enabled: bool = True,
+        max_smart_money_net_buy_100m: float = 0.0,
+        semiconductor_filter_enabled: bool = True,
+        semiconductor_codes: tuple[str, ...] = ("005930", "000660"),
         logger: Optional[logging.Logger] = None,
     ):
         self._regime_ma_period = int(regime_ma_period)
@@ -50,15 +56,38 @@ class InverseEtfRegimeBacktest:
         self._take_profit_pct = take_profit_pct
         self._partial_sell_ratio = float(partial_sell_ratio)
         self.round_trip_cost_pct = float(round_trip_cost_pct)
+        self._smart_money_filter_enabled = bool(smart_money_filter_enabled)
+        self._max_smart_money_net_buy_100m = float(max_smart_money_net_buy_100m)
+        self._semiconductor_filter_enabled = bool(semiconductor_filter_enabled)
+        self._semiconductor_codes = tuple(semiconductor_codes)
         self._logger = logger if logger else logging.getLogger(__name__)
 
     # ── public ──────────────────────────────────────────────────────
 
-    def run(self, index_bars: List[Dict[str, Any]], inverse_bars: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """지수/인버스 일봉(오름차순)에 레짐 슬리브 시뮬을 적용해 거래/요약 반환."""
+    def run(
+        self,
+        index_bars: List[Dict[str, Any]],
+        inverse_bars: List[Dict[str, Any]],
+        *,
+        investor_flows: Optional[List[Dict[str, Any]]] = None,
+        semiconductor_bars: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+    ) -> Dict[str, Any]:
+        """일봉과 확인 데이터에 레짐 슬리브 시뮬을 적용해 거래/요약을 반환한다."""
         inv = [b for b in (inverse_bars or []) if isinstance(b, dict)]
         bear_by_date = self._bear_flags(index_bars or [])
         inv_ma = self._ma_by_date(inv, self._trend_ma_period)
+        flow_by_date = self._rows_by_date(investor_flows or [])
+        semi_by_code = {
+            code: self._bars_with_previous_close((semiconductor_bars or {}).get(code, []))
+            for code in self._semiconductor_codes
+        }
+        coverage = {
+            "candidate_dates": 0,
+            "smart_money_available_dates": 0,
+            "semiconductor_available_dates": 0,
+            "fully_available_dates": 0,
+            "confirmed_dates": 0,
+        }
 
         trades: List[Dict[str, Any]] = []
         n = len(inv)
@@ -80,6 +109,19 @@ class InverseEtfRegimeBacktest:
             ):
                 i += 1
                 continue
+
+            coverage["candidate_dates"] += 1
+            confirmation = self._confirmation_status(date_i, flow_by_date, semi_by_code)
+            if confirmation["smart_money_available"]:
+                coverage["smart_money_available_dates"] += 1
+            if confirmation["semiconductor_available"]:
+                coverage["semiconductor_available_dates"] += 1
+            if confirmation["fully_available"]:
+                coverage["fully_available_dates"] += 1
+            if not confirmation["confirmed"]:
+                i += 1
+                continue
+            coverage["confirmed_dates"] += 1
 
             entry_price = close_i
             # 라이브는 net PnL로 손절하므로 고정 round-trip 비용을 가격 임계값에 역반영한다.
@@ -178,13 +220,20 @@ class InverseEtfRegimeBacktest:
             })
             i = exit_idx + 1  # 포지션 중복 없음
 
-        return {"trades": trades, "summary": self._summarize(trades)}
+        return {
+            "trades": trades,
+            "summary": self._summarize(trades),
+            "confirmation_coverage": coverage,
+        }
 
     def run_periods(
         self,
         index_bars: List[Dict[str, Any]],
         inverse_bars: List[Dict[str, Any]],
         periods: List[Dict[str, str]],
+        *,
+        investor_flows: Optional[List[Dict[str, Any]]] = None,
+        semiconductor_bars: Optional[Dict[str, List[Dict[str, Any]]]] = None,
     ) -> Dict[str, Any]:
         """라벨별 날짜 윈도우([{label,start,end}])로 잘라 기간별 + 전체 요약 반환."""
         out_periods: List[Dict[str, Any]] = []
@@ -193,15 +242,36 @@ class InverseEtfRegimeBacktest:
             start, end = p.get("start", ""), p.get("end", "")
             idx_slice = self._slice(index_bars, start, end)
             inv_slice = self._slice(inverse_bars, start, end)
-            res = self.run(idx_slice, inv_slice)
+            res = self.run(
+                idx_slice,
+                inv_slice,
+                investor_flows=investor_flows,
+                semiconductor_bars=semiconductor_bars,
+            )
             all_trades.extend(res["trades"])
             out_periods.append({
                 "label": p.get("label", f"{start}~{end}"),
                 "start": start, "end": end,
                 "summary": res["summary"],
                 "trades": res["trades"],
+                "confirmation_coverage": res["confirmation_coverage"],
             })
-        return {"periods": out_periods, "overall": self._summarize(all_trades)}
+        coverage_keys = (
+            "candidate_dates",
+            "smart_money_available_dates",
+            "semiconductor_available_dates",
+            "fully_available_dates",
+            "confirmed_dates",
+        )
+        overall_coverage = {
+            key: sum(p["confirmation_coverage"][key] for p in out_periods)
+            for key in coverage_keys
+        }
+        return {
+            "periods": out_periods,
+            "overall": self._summarize(all_trades),
+            "confirmation_coverage": overall_coverage,
+        }
 
     # ── internals ───────────────────────────────────────────────────
 
@@ -221,6 +291,82 @@ class InverseEtfRegimeBacktest:
                 flags[date] = (close < ma) and (prev_ma is not None and ma < prev_ma)
                 prev_ma = ma
         return flags
+
+    def _confirmation_status(
+        self,
+        date: str,
+        flow_by_date: Dict[str, Dict[str, Any]],
+        semi_by_code: Dict[str, Dict[str, tuple[Dict[str, Any], Optional[float]]]],
+    ) -> Dict[str, bool]:
+        smart_available = not self._smart_money_filter_enabled
+        smart_passed = not self._smart_money_filter_enabled
+        if self._smart_money_filter_enabled:
+            flow = flow_by_date.get(date)
+            foreign = self._number_or_none(flow.get("foreign")) if flow else None
+            institution = self._number_or_none(flow.get("institution")) if flow else None
+            smart_available = foreign is not None and institution is not None
+            smart_passed = bool(
+                smart_available
+                and foreign + institution < self._max_smart_money_net_buy_100m
+            )
+
+        semi_available = not self._semiconductor_filter_enabled
+        semi_passed = not self._semiconductor_filter_enabled
+        if self._semiconductor_filter_enabled:
+            checks: List[tuple[bool, bool]] = []
+            for code in self._semiconductor_codes:
+                item = semi_by_code.get(code, {}).get(date)
+                if not item:
+                    checks.append((False, False))
+                    continue
+                bar, prev_close = item
+                open_price = self._number_or_none(bar.get("open"))
+                close = self._number_or_none(bar.get("close"))
+                available = bool(
+                    open_price is not None
+                    and close is not None
+                    and open_price > 0
+                    and close > 0
+                    and prev_close is not None
+                    and prev_close > 0
+                )
+                checks.append((available, bool(
+                    available and close < open_price and close < prev_close
+                )))
+            semi_available = bool(checks) and all(available for available, _ in checks)
+            semi_passed = semi_available and all(passed for _, passed in checks)
+
+        fully_available = smart_available and semi_available
+        return {
+            "smart_money_available": smart_available,
+            "semiconductor_available": semi_available,
+            "fully_available": fully_available,
+            "confirmed": fully_available and smart_passed and semi_passed,
+        }
+
+    @staticmethod
+    def _rows_by_date(rows: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+        return {
+            str(row.get("date")): row
+            for row in rows
+            if isinstance(row, dict) and row.get("date")
+        }
+
+    @classmethod
+    def _bars_with_previous_close(
+        cls,
+        rows: List[Dict[str, Any]],
+    ) -> Dict[str, tuple[Dict[str, Any], Optional[float]]]:
+        out: Dict[str, tuple[Dict[str, Any], Optional[float]]] = {}
+        previous_close: Optional[float] = None
+        valid_rows = sorted(
+            (row for row in rows if isinstance(row, dict) and row.get("date")),
+            key=lambda row: str(row.get("date")),
+        )
+        for row in valid_rows:
+            out[str(row["date"])] = (row, previous_close)
+            previous_close = cls._number_or_none(row.get("close"))
+        return out
 
     def _ma_by_date(self, rows: List[Dict[str, Any]], period: int) -> Dict[str, Optional[float]]:
         """오름차순 일봉의 종가 SMA(기간) → {date: ma}. 데이터 부족 구간은 None."""
@@ -280,3 +426,10 @@ class InverseEtfRegimeBacktest:
             return float(x if x is not None else 0)
         except (TypeError, ValueError):
             return 0.0
+
+    @staticmethod
+    def _number_or_none(x) -> Optional[float]:
+        try:
+            return float(x) if x is not None else None
+        except (TypeError, ValueError):
+            return None
