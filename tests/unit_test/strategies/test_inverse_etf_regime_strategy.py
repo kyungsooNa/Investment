@@ -126,6 +126,9 @@ async def test_scan_emits_buy_when_bear_and_trend_confirmed(bear_setup):
     assert sig.code == "114800"
     assert sig.strategy_name == strat.name
     assert sig.entry_reason == "inverse_etf_bear_regime"
+    assert "장중상승(현재가 10000 > 시가 9900, 등락률 +1.00%)" in sig.reason
+    assert "외인·기관 -1,500억" in sig.reason
+    assert "반도체 음봉" in sig.reason
 
 
 @pytest.mark.asyncio

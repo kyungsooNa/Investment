@@ -166,7 +166,8 @@ class InverseEtfRegimeStrategy(LiveStrategy):
         stop_loss_price = ask_price * (1 + self._cfg.hard_stop_pct / 100)
         reason_msg = (
             f"베어 레짐({regime.trend_status}) + 추세확인(현재가 {current} > {self._cfg.trend_ma_period}MA "
-            f"{ma:.0f}){confirmation} 진입"
+            f"{ma:.0f}) + 장중상승(현재가 {current} > 시가 {open_price}, 등락률 {change_rate:+.2f}%)"
+            f"{confirmation} 진입"
         )
         self._logger.info({
             "event": "entry_signal_generated", "code": code, "name": name,
