@@ -1,6 +1,8 @@
 import json
+import shutil
 import sqlite3
 from datetime import datetime, timedelta
+from pathlib import Path
 
 from services.operational_backup_service import OperationalBackupService
 
@@ -192,3 +194,100 @@ def test_restore_backup_refuses_live_data_directory(tmp_path):
             confirm_backup_id="20261001_180000",
             destination_dir=data_dir,
         )
+
+
+def _make_corpus_file(data_dir, name, payload):
+    path = data_dir / "backtest_microstructure" / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return path
+
+
+def test_create_backup_archives_microstructure_corpus_incrementally(tmp_path):
+    data_dir = tmp_path / "data"
+    backup_root = tmp_path / "offdisk"
+    _make_corpus_file(data_dir, "replay_microstructure_20261001.json", {"d": 1})
+    _make_corpus_file(data_dir, "replay_quality_20261001.json", {"valid_for_backtest": True})
+    (data_dir / "backtest_microstructure" / "notes.txt").write_text("skip", encoding="utf-8")
+    (data_dir / "kill_switch_state.json").write_text("{}", encoding="utf-8")
+    service = OperationalBackupService(
+        data_dir=data_dir,
+        backup_root=backup_root,
+        sqlite_relative_paths=(),
+        json_globs=("kill_switch_state.json",),
+        now_provider=lambda: datetime(2026, 10, 1, 16, 30, 0),
+    )
+
+    first = service.create_backup()
+
+    archive_dir = backup_root / "archive" / "backtest_microstructure"
+    assert sorted(p.name for p in archive_dir.iterdir()) == [
+        "replay_microstructure_20261001.json",
+        "replay_quality_20261001.json",
+    ]
+    assert first["archive"]["copied"] == 2
+    assert first["archive"]["errors"] == []
+    assert first["status"] == "passed"
+    # 스냅샷 디렉터리에는 코퍼스를 복제하지 않는다(14개 스냅샷 × 코퍼스 중복 방지).
+    assert not (backup_root / "20261001_163000" / "files" / "backtest_microstructure").exists()
+
+    _make_corpus_file(data_dir, "replay_microstructure_20261002.json", {"d": 2})
+    _make_corpus_file(data_dir, "replay_quality_20261001.json", {"valid_for_backtest": False})
+    service._now = lambda: datetime(2026, 10, 2, 16, 30, 0)
+    second = service.create_backup()
+
+    assert second["archive"]["copied"] == 2
+    assert second["archive"]["unchanged"] == 1
+    assert second["archive"]["total"] == 3
+    assert json.loads((archive_dir / "replay_quality_20261001.json").read_text(encoding="utf-8")) == {
+        "valid_for_backtest": False
+    }
+
+
+def test_archive_never_deletes_files_removed_from_source(tmp_path):
+    data_dir = tmp_path / "data"
+    backup_root = tmp_path / "offdisk"
+    source = _make_corpus_file(data_dir, "replay_microstructure_20261001.json", {"d": 1})
+    service = OperationalBackupService(
+        data_dir=data_dir,
+        backup_root=backup_root,
+        sqlite_relative_paths=(),
+        json_globs=(),
+        now_provider=lambda: datetime(2026, 10, 1, 16, 30, 0),
+    )
+    service.create_backup()
+    source.unlink()
+    service._now = lambda: datetime(2026, 10, 2, 16, 30, 0)
+
+    service.create_backup()
+
+    assert (backup_root / "archive" / "backtest_microstructure" / "replay_microstructure_20261001.json").exists()
+
+
+def test_create_backup_fails_when_archive_copy_fails(tmp_path, monkeypatch):
+    data_dir = tmp_path / "data"
+    state_path = data_dir / "kill_switch_state.json"
+    state_path.parent.mkdir(parents=True)
+    state_path.write_text("{}", encoding="utf-8")
+    _make_corpus_file(data_dir, "replay_microstructure_20261001.json", {"d": 1})
+    service = OperationalBackupService(
+        data_dir=data_dir,
+        backup_root=tmp_path / "offdisk",
+        sqlite_relative_paths=(),
+        json_globs=("kill_switch_state.json",),
+        now_provider=lambda: datetime(2026, 10, 1, 16, 30, 0),
+    )
+
+    real_copy = shutil.copy2
+
+    def _broken_archive_copy(src, dst, *args, **kwargs):
+        if "archive" in Path(dst).parts:
+            raise OSError("disk full")
+        return real_copy(src, dst, *args, **kwargs)
+
+    monkeypatch.setattr("services.operational_backup_service.shutil.copy2", _broken_archive_copy)
+
+    result = service.create_backup()
+
+    assert result["status"] == "failed"
+    assert result["archive"]["errors"][0]["reason"] == "archive_copy_failed"

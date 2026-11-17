@@ -690,6 +690,7 @@ class ServiceContainer:
 
             if needs_batch:
                 ctx.operational_backup_task = OperationalBackupTask(
+                    backup_root=(config_dict.get("operational_backup") or {}).get("backup_root"),
                     mcs=ctx._mcs,
                     market_clock=ctx.market_clock,
                     notification_service=ctx.notification_service,

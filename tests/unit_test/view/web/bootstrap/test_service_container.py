@@ -487,6 +487,28 @@ def test_microstructure_capture_receives_stock_repository_for_stage2_pit(
     assert kwargs["stage2_stock_repository"] is ctx.stock_repository
 
 
+def test_operational_backup_uses_configured_offdisk_backup_root(patched_service_container_deps):
+    """`operational_backup.backup_root` 로 백업·코퍼스 아카이브를 데이터 디스크 밖에 둘 수 있다."""
+    from view.web.bootstrap.service_container import ServiceContainer
+
+    ctx = _make_fake_context()
+    ctx.full_config = {"operational_backup": {"backup_root": "D:/investment_backups"}}
+    ServiceContainer(ctx).run()
+
+    kwargs = patched_service_container_deps["OperationalBackupTask"].call_args.kwargs
+    assert kwargs["backup_root"] == "D:/investment_backups"
+
+
+def test_operational_backup_defaults_to_data_dir_backup_root(patched_service_container_deps):
+    from view.web.bootstrap.service_container import ServiceContainer
+
+    ctx = _make_fake_context()
+    ServiceContainer(ctx).run()
+
+    kwargs = patched_service_container_deps["OperationalBackupTask"].call_args.kwargs
+    assert kwargs["backup_root"] is None
+
+
 def test_service_container_creates_theme_leader_service(patched_service_container_deps):
     """ThemeLeaderService, ThemeDailyLeaderService 와 분류 저장소가 ctx 에 주입된다."""
     from view.web.bootstrap.service_container import ServiceContainer

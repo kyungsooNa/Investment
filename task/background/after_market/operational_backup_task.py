@@ -14,6 +14,7 @@ class OperationalBackupTask(AfterMarketTask):
         self,
         *,
         backup_service=None,
+        backup_root=None,
         notification_service=None,
         mcs=None,
         market_clock=None,
@@ -21,7 +22,8 @@ class OperationalBackupTask(AfterMarketTask):
         worker_pool=None,
     ):
         super().__init__(mcs=mcs, market_clock=market_clock, logger=logger, worker_pool=worker_pool)
-        self._backup_service = backup_service or OperationalBackupService()
+        # backup_root 를 데이터와 다른 디스크로 두면 디스크 장애 시에도 replay 코퍼스가 남는다.
+        self._backup_service = backup_service or OperationalBackupService(backup_root=backup_root)
         self._notification_service = notification_service
         self._progress = {"running": False, "last_result": None}
 
