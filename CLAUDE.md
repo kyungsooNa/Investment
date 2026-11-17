@@ -202,9 +202,9 @@ Investment/
 │   ├── rs_rating / minervini_stage / oneil_universe / newhigh_service  # 종목 선별
 │   └── ... (백테스트·리스크게이트·주문정책·전략게이트·해외 등)
 ├── strategies/             # 매매 전략 + 백테스트 (모멘텀, VBO, 오닐, 눌림목 등 + ablation/stability)
-│   ├── momentum_strategy.py        # 모멘텀 전략 (변동률+후속상승)
-│   ├── GapUpPullback_strategy.py   # 갭상승 눌림목 전략
-│   ├── strategy_executor.py        # Strategy 래퍼 (+ Minervini Stage Guard)
+│   ├── larry_williams_vbo_strategy.py 등  # 운영 전략 — 등록은 view/web/bootstrap/strategy_factory.py
+│   ├── momentum / GapUpPullback / program_buy_follow / *volume_breakout* / strategy_executor
+│   │                                # 레거시: 운영 미배선(테스트에서만 참조)
 │   └── backtest_data_provider.py   # 백테스트 데이터 제공
 ├── task/background/        # 백그라운드 태스크
 │   ├── after_market/       # 장마감 후 (랭킹, OHLCV, 리포트, 캐시워밍 등)
@@ -240,7 +240,7 @@ View (FastAPI 웹 / CLI)
 ## 핵심 설계 패턴
 - **DI**: 모든 주요 클래스가 생성자를 통해 의존성 주입 (logger, market_clock, env 등)
 - **라우팅**: FastAPI `view/web/routes/*` 모듈이 기능별로 `/api/*` 엔드포인트를 디스패치
-- **Strategy 패턴**: `Strategy` 추상 클래스 → `MomentumStrategy`, `GapUpPullbackStrategy`, 오닐/VBO 등 구현
+- **Strategy 패턴**: `LiveStrategy` 구현체 (VBO/CB/오닐 PP·Squeeze/HTF/첫눌림/RSI2/Minervini Stage2/인버스ETF)를 `strategy_factory.py`가 `StrategyScheduler`에 등록. `MomentumStrategy`·`GapUpPullbackStrategy`·`StrategyExecutor`는 운영 미배선 레거시
 - **Proxy/Decorator**: `ClientWithCache`가 API 클라이언트를 래핑 (장 마감 후 캐시 활성)
 - **실전/모의 투명 전환**: URL, TR ID가 `is_paper_trading` 플래그에 따라 자동 전환
 
@@ -264,7 +264,7 @@ View (FastAPI 웹 / CLI)
   - `get_all_trades()` / `get_holds()` / `get_holds_by_strategy()` — 조회
 - **VirtualTradeService** (`services/virtual_trade_service.py`): 성과 요약, 전략별 수익률 변화, 실제 잔고 reconcile
 - **웹 API**: `GET /api/virtual/summary`, `GET /api/virtual/history` (`view/web/routes/virtual.py`)
-- **웹 주문 연동**: `POST /api/order` 성공 시 `"수동매매"` 전략명으로 자동 기록 (`view/web/routes/order.py`)
+- **웹 주문 연동**: `POST /api/order` 는 `source="manual:수동매매"` 로 접수하고, 체결 확인 후 `OrderExecutionService`가 `"수동매매"` 전략명으로 기록 (`view/web/routes/order.py`)
 - **웹 UI**: 전략별 탭 필터링 + 성과 요약 박스 (`app.js` — `loadVirtualHistory()`, `filterVirtualStrategy()`)
 - **CLI**: 성과요약 전용 메뉴 없음 (웹 UI에서만 조회 가능)
 
