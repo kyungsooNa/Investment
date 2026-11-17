@@ -208,11 +208,11 @@ TR 쌍은 있으나 모의 서버가 해외 주문을 실제로 수락하는지 
 
 ### 대표 전략
 
-- `strategies/momentum_strategy.py`
-  - 급등 후 일정 시간 뒤 추가 상승 여부를 보는 모멘텀 전략
-- `strategies/volume_breakout_live_strategy.py`
-- `strategies/traditional_volume_breakout_strategy.py`
-- `strategies/program_buy_follow_strategy.py`
+> 운영 등록 경로는 `view/web/bootstrap/strategy_factory.py` 하나다(2026-11-17 실측: 9종 — VBO·CB·오닐 PP/Squeeze·HTF·첫눌림·RSI2·Minervini Stage2·인버스ETF).
+> `momentum`·`GapUpPullback`·`program_buy_follow`·`volume_breakout_live`·`traditional_volume_breakout`·`strategy_executor` 는
+> 운영 코드에서 import 0건인 레거시다(테스트에서만 참조). 삭제/백테스트 통합 여부는 todo "레거시 전략 백테스트 통합 여부" 결정 대기.
+
+- `strategies/larry_williams_vbo_strategy.py`
 - `strategies/oneil_squeeze_breakout_strategy.py`
 - `strategies/oneil_pocket_pivot_strategy.py`
 - `strategies/high_tight_flag_strategy.py`
@@ -220,7 +220,8 @@ TR 쌍은 있으나 모의 서버가 해외 주문을 실제로 수락하는지 
 
 ### 전략 실행 구조
 
-- `strategies/strategy_executor.py`
+- 운영: `strategy_factory.py` → `scheduler/strategy_scheduler.py` (`scan`/`check_exits`)
+- `strategies/strategy_executor.py` (레거시, 운영 미배선)
   - 종목 리스트를 받아 전략 실행
   - 선택적으로 Minervini Stage Guard 적용
   - 허용 스테이지만 통과시킨 뒤 `strategy.run()` 호출
@@ -332,7 +333,7 @@ TR 쌍은 있으나 모의 서버가 해외 주문을 실제로 수락하는지 
 ### C. 전략/스케줄러 수정
 
 1. 대상 전략 파일 `strategies/*.py`
-2. `strategies/strategy_executor.py`
+2. 등록 경로 `view/web/bootstrap/strategy_factory.py`
 3. `scheduler/strategy_scheduler.py`
 4. 관련 배치 태스크 `task/background/*`
 5. 초기화/주입 경로 `view/web/web_app_initializer.py`
@@ -815,7 +816,7 @@ AGENTS.md에 중요한 테스트 hang 패턴이 정리돼 있다. 특히 아래�
 - 시작:
   - `strategies/<target>_strategy.py`
 - 함께 볼 것:
-  - `strategies/strategy_executor.py`
+  - `view/web/bootstrap/strategy_factory.py`
   - `scheduler/strategy_scheduler.py`
   - `services/minervini_stage_service.py`
   - `services/rs_rating_service.py`
@@ -1039,7 +1040,7 @@ pytest tests/integration_test/test_it_web_api_deep.py -v -n0
 조사 경로:
 
 1. 대상 전략 파일 `strategies/<target>_strategy.py`
-2. `strategies/strategy_executor.py`
+2. `view/web/bootstrap/strategy_factory.py`
 3. `scheduler/strategy_scheduler.py`
 4. 필요 시 아래 보조 서비스
    - `services/minervini_stage_service.py`
