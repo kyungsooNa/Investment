@@ -279,6 +279,22 @@ def test_trading_only_registers_intraday_and_watchdog(patched_scheduler_deps):
     }
 
 
+def test_trading_registers_heartbeat_when_url_configured(patched_scheduler_deps):
+    ctx = _make_fake_context(RuntimeMode.TRADING)
+    ctx.full_config = {"heartbeat": {"url": "https://hc-ping.example/id"}}
+    _run(ctx)
+    names = _registered_bg_task_names(patched_scheduler_deps)
+    assert "heartbeat" in names
+    assert ctx.heartbeat_task is not None
+
+
+def test_batch_only_does_not_register_heartbeat(patched_scheduler_deps):
+    ctx = _make_fake_context(RuntimeMode.BATCH)
+    ctx.full_config = {"heartbeat": {"url": "https://hc-ping.example/id"}}
+    _run(ctx)
+    assert "heartbeat" not in _registered_bg_task_names(patched_scheduler_deps)
+
+
 def test_batch_only_registers_after_market_tasks_no_watchdog(patched_scheduler_deps):
     ctx = _make_fake_context(RuntimeMode.BATCH)
     _run(ctx)

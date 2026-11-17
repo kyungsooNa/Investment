@@ -433,6 +433,14 @@ market_cap_gap_report_us_enabled: true
 # 장마감 후 후보/보유 종목 microstructure overlay 캡처 (백테스트 replay 코퍼스 축적, KST 16:05)
 microstructure_capture_enabled: true
 
+# 외부 생존 감시(dead-man switch). 매매 런타임이 interval_sec 마다 url 로 GET ping 을 보낸다.
+# 프로세스 크래시·호스트 다운이면 앱 내부 알림이 나갈 수 없으므로, healthchecks.io 호환 서비스가
+# ping 끊김을 감지해 알리게 한다. 장중에만 감시하려면 감시 서비스 쪽 cron 스케줄로 지정한다.
+# url 이 비어 있으면 비활성. url 은 감시 ID 를 포함한 비밀값이므로 공유하지 않는다.
+heartbeat:
+  url:
+  interval_sec: 60
+
 # 주 마지막 거래일 장 마감 후 유효 캡처로 활성 전략을 자동 검증한다.
 weekly_backtest_campaign:
   enabled: true
