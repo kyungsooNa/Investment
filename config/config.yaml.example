@@ -433,6 +433,12 @@ market_cap_gap_report_us_enabled: true
 # 장마감 후 후보/보유 종목 microstructure overlay 캡처 (백테스트 replay 코퍼스 축적, KST 16:05)
 microstructure_capture_enabled: true
 
+# 장마감 후 운영 원장·상태 백업 + replay 코퍼스(data/backtest_microstructure) 누적 아카이브.
+# backup_root 를 비우면 data/operational_backups 에 저장한다(데이터와 같은 디스크).
+# 디스크 장애에 대비하려면 다른 디스크·외장/동기화 폴더 경로를 지정한다. 예: D:/investment_backups
+operational_backup:
+  backup_root:
+
 # 외부 생존 감시(dead-man switch). 매매 런타임이 interval_sec 마다 url 로 GET ping 을 보낸다.
 # 프로세스 크래시·호스트 다운이면 앱 내부 알림이 나갈 수 없으므로, healthchecks.io 호환 서비스가
 # ping 끊김을 감지해 알리게 한다. 장중에만 감시하려면 감시 서비스 쪽 cron 스케줄로 지정한다.

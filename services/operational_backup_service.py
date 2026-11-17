@@ -30,6 +30,12 @@ DEFAULT_JSON_GLOBS = (
     "overseas_favorite_price_alert_state.json",
     "inverse_etf_regime_state.json",
 )
+# 누적 아카이브 대상: 재생성할 수 없고 시간이 지나야 쌓이는 백테스트 replay 코퍼스.
+# 원천 DB(체결강도·호가 30일, 프로그램매매 7일)는 보존기간 뒤 삭제되므로 이 파일들이 유일한 사본이다.
+DEFAULT_ARCHIVE_GLOBS = (
+    "backtest_microstructure/replay_*.json",
+)
+_ARCHIVE_DIR_NAME = "archive"
 _BACKUP_DIR_PATTERN = re.compile(r"^\d{8}_\d{6}$")
 
 
@@ -43,6 +49,7 @@ class OperationalBackupService:
         backup_root: str | Path | None = None,
         sqlite_relative_paths: Iterable[str] = DEFAULT_SQLITE_PATHS,
         json_globs: Iterable[str] = DEFAULT_JSON_GLOBS,
+        archive_globs: Iterable[str] = DEFAULT_ARCHIVE_GLOBS,
         retention_count: int = 14,
         now_provider: Callable[[], datetime] | None = None,
     ) -> None:
@@ -50,6 +57,7 @@ class OperationalBackupService:
         self._backup_root = Path(backup_root) if backup_root else self._data_dir / "operational_backups"
         self._sqlite_relative_paths = tuple(sqlite_relative_paths)
         self._json_globs = tuple(json_globs)
+        self._archive_globs = tuple(archive_globs)
         self._retention_count = max(int(retention_count), 1)
         self._now = now_provider or datetime.now
 
@@ -95,10 +103,49 @@ class OperationalBackupService:
         self._write_manifest(manifest_path, manifest)
         verification = self.verify_backup(backup_dir)
         manifest["restore_verification"] = verification
-        manifest["status"] = "passed" if verification["passed"] and entries else "failed"
+        archive = self._archive_corpus()
+        manifest["archive"] = archive
+        manifest["status"] = (
+            "passed" if verification["passed"] and entries and not archive["errors"] else "failed"
+        )
         self._write_manifest(manifest_path, manifest)
         self._prune_old_backups()
         return manifest
+
+    def _archive_corpus(self) -> dict:
+        """코퍼스 파일을 스냅샷과 별도로 append-only 누적 복사한다.
+
+        새 파일·내용이 바뀐 파일만 복사하고, 원천에서 사라진 파일도 아카이브에서는 지우지 않는다.
+        스냅샷마다 코퍼스를 통째로 복제하면 보존 개수만큼 용량이 늘어나므로 분리한다.
+        """
+        archive_root = self._backup_root / _ARCHIVE_DIR_NAME
+        copied = unchanged = 0
+        errors: list[dict] = []
+        sources: dict[str, Path] = {}
+        for pattern in self._archive_globs:
+            for source in self._data_dir.glob(pattern):
+                if source.is_file():
+                    sources[source.relative_to(self._data_dir).as_posix()] = source
+        for relative, source in sorted(sources.items()):
+            target = archive_root / Path(relative)
+            try:
+                if target.is_file() and self._sha256(target) == self._sha256(source):
+                    unchanged += 1
+                    continue
+                target.parent.mkdir(parents=True, exist_ok=True)
+                temp = target.with_name(target.name + ".tmp")
+                shutil.copy2(source, temp)
+                temp.replace(target)
+                copied += 1
+            except OSError as exc:
+                errors.append({"source": relative, "reason": "archive_copy_failed", "detail": str(exc)})
+        return {
+            "archive_root": str(archive_root),
+            "copied": copied,
+            "unchanged": unchanged,
+            "total": len(sources),
+            "errors": errors,
+        }
 
     def verify_backup(self, backup_dir: str | Path) -> dict:
         backup_dir = Path(backup_dir)
