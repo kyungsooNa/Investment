@@ -46,3 +46,11 @@ async def test_operational_backup_task_logs_failed_restore_verification():
     logger.error.assert_called_once()
     notification_service.emit.assert_awaited_once()
     assert notification_service.emit.await_args.args[2] == "운영 백업 검증 실패"
+
+
+def test_operational_backup_task_builds_service_with_configured_backup_root(tmp_path):
+    task = OperationalBackupTask(
+        backup_root=tmp_path / "offdisk", mcs=None, market_clock=None, logger=MagicMock()
+    )
+
+    assert task._backup_service._backup_root == tmp_path / "offdisk"

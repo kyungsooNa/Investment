@@ -433,6 +433,12 @@ market_cap_gap_report_us_enabled: true
 # 장마감 후 후보/보유 종목 microstructure overlay 캡처 (백테스트 replay 코퍼스 축적, KST 16:05)
 microstructure_capture_enabled: true
 
+# 장마감 후 운영 원장·상태 백업 + replay 코퍼스(data/backtest_microstructure) 누적 아카이브.
+# backup_root 를 비우면 data/operational_backups 에 저장한다(데이터와 같은 디스크).
+# 디스크 장애에 대비하려면 다른 디스크·외장/동기화 폴더 경로를 지정한다. 예: D:/investment_backups
+operational_backup:
+  backup_root:
+
 # 주 마지막 거래일 장 마감 후 유효 캡처로 활성 전략을 자동 검증한다.
 weekly_backtest_campaign:
   enabled: true
