@@ -1397,6 +1397,27 @@ def test_intraday_strategies_get_distinct_state_files(patched_service_container_
     assert cb_file and pp_file and cb_file != pp_file
 
 
+def test_intraday_vbo_gets_its_own_state_file(patched_service_container_deps):
+    """P0-1: VBO 도 상태 파일이 배선돼야 장중 재시작·EOD 청산 실패에 보유를 잃지 않는다."""
+    from config.config_loader import AppConfig
+
+    ctx = _make_fake_context()
+    ctx.enabled_market_modes = ["domestic", "overseas_us"]
+    ctx.overseas_stock_code_repository = MagicMock()
+    ctx.full_config = AppConfig(
+        web={"host": "localhost", "port": 8080},
+        overseas_stock={
+            "intraday_vbo": {"enabled": True},
+            "intraday_channel_breakout": {"enabled": True},
+        },
+    )
+
+    _run_with_overseas(ctx)
+
+    vbo_file = ctx.overseas_intraday_vbo_service._state_file
+    assert vbo_file and vbo_file != ctx.overseas_intraday_cb_service._state_file
+
+
 def test_open_position_count_spans_all_strategies(patched_service_container_deps):
     """동시 보유 한도는 전략 합계 기준이어야 한다 — 전략별로 세면 한도가 배로 늘어난다."""
     from config.config_loader import AppConfig

@@ -14,8 +14,10 @@ dry-run(`OverseasVBODryRunService`)은 미국장 마감 후 *완성된* 일봉�
 broker 의존을 갖지 않으며, live_enabled=False 인 주문 서비스를 주입받으면 would-be
 주문만 저널에 남는다(Phase 5 이전 기본값).
 
-한계: 포지션 상태는 in-memory 다. 장중 재시작 시 보유가 소실돼 EOD 청산 기록이
-누락될 수 있다(paper 경로라 실포지션 영향은 없음).
+공통 베이스(`OverseasIntradayStrategyBase`)를 상속한다 — 감시목록·포지션 영속화(P0-1)·
+청산 지정가 재시도(P0-4)·리스크 기반 사이징(P1-4)·마켓타이밍 게이트를 다른 장중 전략과
+공유한다. 종전 독립 구현은 날이 바뀌면 보유를 지워 EOD 청산 실패 포지션이 조용히
+사라졌다.
 """
 from __future__ import annotations
 
@@ -23,18 +25,14 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from common.overseas_types import OverseasExchange
-from common.types import ErrorCode
 from services.indicator_service import IndicatorService
+from services.overseas_intraday_strategy_base import OverseasIntradayStrategyBase
 
 
-class OverseasIntradayVBOService:
+class OverseasIntradayVBOService(OverseasIntradayStrategyBase):
     STRATEGY_NAME = "LarryWilliamsVBO_overseas_intraday"
     STRATEGY_VERSION = "1"
-    MARKET = "US"
-    # 감시목록이 빈 채로 latch 되면 그날 전략이 통째로 죽는다. VBO 는 당일 시가가
-    # 필요해 개장 직후 당일 봉이 없으면 전 종목이 제외되므로 특히 잘 걸린다 —
-    # 빈 결과는 고정하지 않고 폴링 패스 기준 이 횟수까지 다시 만들어 본다.
-    EMPTY_SESSION_RETRY_PASSES = 10
+    EVENT_PREFIX = "overseas_intraday_vbo"
 
     def __init__(
         self,
@@ -58,20 +56,27 @@ class OverseasIntradayVBOService:
         macd_signal_period: int = 9,
         macd_min_histogram: float = 0.0,
         macd_histogram_rising_bars: int = 2,
+        state_file: Optional[str] = None,
+        market_clock=None,
+        account_equity_provider=None,
     ) -> None:
-        self._candidate_service = candidate_service
-        self._sqs = stock_query_service
-        self._orders = order_execution_service
-        self._sizing_service = position_sizing_service
-        self._logger = logger or logging.getLogger(__name__)
+        super().__init__(
+            candidate_service=candidate_service,
+            stock_query_service=stock_query_service,
+            order_execution_service=order_execution_service,
+            market_clock=market_clock,
+            position_sizing_service=position_sizing_service,
+            market_regime_service=market_regime_service,
+            logger=logger,
+            top_n=top_n,
+            max_positions=max_positions,
+            exchange=exchange,
+            market_timing_gate=market_timing_gate,
+            state_file=state_file,
+            account_equity_provider=account_equity_provider,
+        )
         self._k = k_value
         self._stop_loss_pct = stop_loss_pct
-        self._top_n = top_n
-        self._max_positions = max_positions
-        self._default_exchange = exchange
-        # 미국장 국면 게이트. 미주입이면 게이트 없이 기존 동작을 유지한다.
-        self._regime = market_regime_service
-        self._market_timing_gate = market_timing_gate
         self._indicator = indicator_service or IndicatorService()
         self._macd_filter_enabled = macd_filter_enabled
         self._macd_fast_period = macd_fast_period
@@ -79,259 +84,53 @@ class OverseasIntradayVBOService:
         self._macd_signal_period = macd_signal_period
         self._macd_min_histogram = macd_min_histogram
         self._macd_histogram_rising_bars = macd_histogram_rising_bars
+        # 베이스의 일봉 조회 개수 — MACD 필터 사용 여부에 따라 달라진다.
+        self.HISTORY_LIMIT = self._ohlcv_limit()
 
-        self._session_date: Optional[str] = None
-        self._watch: Dict[str, Dict[str, Any]] = {}
-        self._positions: Dict[str, Dict[str, Any]] = {}
-        self._entered_today: set[str] = set()
-        self._empty_attempt_date: Optional[str] = None
-        self._empty_attempts = 0
+    # ── 전략별 구현부 ───────────────────────────────────────────────────
 
-    # ── 세션 ────────────────────────────────────────────────────────────
-
-    async def prepare_session(
-        self,
-        trade_date: str,
-        exchange: Optional[OverseasExchange] = None,
-    ) -> int:
-        """당일 감시 목록(종목별 target)을 만든다. 반환: 감시 종목 수.
-
-        당일 봉이 아직 없는 종목은 시가를 알 수 없으므로 감시에서 제외한다
-        (fail-closed — 추정 시가로 진입하지 않는다). 같은 거래일에 두 번 호출되면
-        두 번째부터는 no-op 이다.
-
-        **단, 감시목록이 비었으면 no-op 으로 넘기지 않는다** — 감시가 0개면 그날
-        진입 판정이 아예 돌지 않는데, 개장 직후엔 당일 봉이 아직 없어 전 종목이
-        제외되는 일이 실제로 있다. 이를 고정하면 전략이 하루 통째로 죽으므로
-        `EMPTY_SESSION_RETRY_PASSES` 회까지 다음 폴링 패스에서 다시 만든다.
-        """
-        if self._empty_attempt_date != trade_date:
-            self._empty_attempt_date = trade_date
-            self._empty_attempts = 0
-        if self._session_date == trade_date and (
-            self._watch or self._empty_attempts >= self.EMPTY_SESSION_RETRY_PASSES
-        ):
-            return len(self._watch)
-        self._empty_attempts += 1
-
-        ex = exchange or self._default_exchange
-        candidates = await self._candidate_service.get_candidates(
-            ex,
-            top_n=self._top_n,
-            selection_key=self.STRATEGY_NAME,
-            selection_date=trade_date,
-            selection_pool_size=self._top_n * 2,
-        )
-
-        watch: Dict[str, Dict[str, Any]] = {}
-        for cand in candidates or []:
-            code = cand.get("code")
-            if not code:
-                continue
-            setup = await self._build_setup(code, trade_date, ex)
-            if setup:
-                watch[code] = setup
-
-        # 보유·당일진입 이력 초기화는 **거래일이 실제로 바뀔 때만** 한다.
-        # 재시도 패스에서 지우면 손절·EOD 청산이 돌 대상을 잃는다.
-        if self._session_date != trade_date:
-            self._positions = {}
-            self._entered_today = set()
-        self._session_date = trade_date
-        self._watch = watch
-        self._logger.info({
-            "event": "overseas_intraday_vbo_session", "trade_date": trade_date,
-            "exchange": ex.value, "candidates": len(candidates or []), "watch": len(watch),
-            "attempt": self._empty_attempts,
-        })
-        return len(watch)
-
-    async def _build_setup(
-        self, code: str, trade_date: str, exchange: OverseasExchange,
-    ) -> Optional[Dict[str, Any]]:
-        try:
-            resp = await self._sqs.get_recent_daily_ohlcv(code, limit=self._ohlcv_limit(), exchange=exchange)
-        except Exception as e:
-            self._logger.warning({"event": "overseas_intraday_vbo_ohlcv_error",
-                                  "code": code, "error": str(e)})
+    def _build_setup(self, code, history, today_bar, trade_date) -> Optional[Dict[str, Any]]:
+        """당일 봉이 없는 종목은 시가를 알 수 없으므로 제외한다(fail-closed)."""
+        if not today_bar or not history:
             return None
-        if not resp or resp.rt_cd != ErrorCode.SUCCESS.value or not resp.data:
-            return None
-        rows = resp.data
-        if len(rows) < 2:
-            return None
-        prev, cur = rows[-2], rows[-1]
-        if str(cur.get("date") or "") != str(trade_date):
-            return None  # 당일 봉 미생성 → 시가 미확정
+        prev = history[-1]
         prev_range = self._f(prev.get("high")) - self._f(prev.get("low"))
-        open_ = self._f(cur.get("open"))
+        open_ = self._f(today_bar.get("open"))
         if prev_range <= 0 or open_ <= 0:
             return None
-        macd_metrics = self._evaluate_macd_filter(rows[:-1])
+        macd_metrics = self._evaluate_macd_filter(history)
         if macd_metrics is None:
             return None
         setup = {
             "open": open_,
             "prev_range": prev_range,
             "target": open_ + self._k * prev_range,
-            "exchange": exchange,
         }
         if macd_metrics:
             setup.update(macd_metrics)
         return setup
 
-    def watch_codes(self) -> List[str]:
-        return list(self._watch.keys())
+    def _should_enter(self, setup, price, volume, now) -> bool:
+        return price >= setup["target"]
 
-    def get_state(self) -> Dict[str, Any]:
-        return {
-            "session_date": self._session_date,
-            "watch": self._watch,
-            "positions": self._positions,
-            "entered_today": sorted(self._entered_today),
-        }
+    def _stop_price(self, setup, price) -> float:
+        return price * (1 + self._stop_loss_pct / 100.0)
 
-    # ── 틱 판정 ─────────────────────────────────────────────────────────
+    def _entry_reason(self) -> str:
+        return "vbo_intraday_breakout"
 
-    async def on_price(self, code: str, price: float, *, volume: Optional[float] = None) -> Optional[Dict[str, Any]]:
-        """폴링가 1건을 판정해 주문까지 수행한다. 주문이 없으면 None."""
-        px = self._f(price)
-        if px <= 0:
-            return None
-
-        held = self._positions.get(code)
-        if held is not None:
-            held["last_price"] = px
-            if px <= held["stop_price"]:
-                return await self._exit(code, px, reason="stop")
-            return None
-
-        setup = self._watch.get(code)
-        if setup is None or code in self._entered_today:
-            return None
-        if px < setup["target"]:
-            return None
-        if not await self._is_regime_ok(code):
-            return None
-        if len(self._positions) >= self._max_positions:
-            self._logger.info({"event": "overseas_intraday_vbo_entry_blocked", "code": code,
-                               "reason": "max_positions", "max_positions": self._max_positions})
-            return None
-        return await self._enter(code, px, setup)
-
-    async def _is_regime_ok(self, code: str) -> bool:
-        """미국장 국면이 신규 진입에 적합한지 판정한다.
-
-        돌파가 확인된 뒤에만 호출된다(틱마다 판정을 돌리지 않기 위함). 국면 판정은
-        `USMarketRegimeService` 가 거래일 단위로 캐시하므로 하루 1회만 조회가 나간다.
-        조회 실패는 **fail-closed** — 국면을 모르는 채로 발사하지 않는다.
-        청산(손절/EOD)은 이 게이트를 거치지 않는다.
-        """
-        if self._regime is None or not self._market_timing_gate:
-            return True
-        try:
-            snap = await self._regime.classify(self.MARKET)
-        except Exception as e:
-            self._logger.warning({"event": "overseas_intraday_vbo_regime_error",
-                                  "code": code, "error": str(e)})
-            return False
-        if snap.is_rising:
-            return True
-        self._logger.info({
-            "event": "overseas_intraday_vbo_entry_blocked", "code": code,
-            "reason": "market_timing", "regime": snap.regime_label,
-            "fail_detail": snap.fail_detail,
-        })
-        return False
-
-    async def _enter(self, code: str, price: float, setup: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        qty = self._resolve_qty(price)
-        if qty <= 0:
-            return None
-        stop_price = price * (1 + self._stop_loss_pct / 100.0)
-        signal = {
-            "strategy": self.STRATEGY_NAME,
-            "code": code,
-            "action": "BUY",
-            "date": self._session_date,
-            "entry_price": price,
-            "target": setup["target"],
-            "stop_price": stop_price,
-            "prev_range": setup["prev_range"],
-            "reason": "vbo_intraday_breakout",
-        }
+    def _signal_extras(self, setup, price) -> Dict[str, Any]:
+        extras = {"target": setup["target"], "prev_range": setup["prev_range"]}
         if setup.get("macd_filter_enabled"):
-            signal.update({
+            extras.update({
                 "macd_filter_enabled": True,
                 "macd": setup.get("macd"),
                 "macd_signal": setup.get("macd_signal"),
                 "macd_histogram": setup.get("macd_histogram"),
             })
-        resp = await self._orders.place_entry(
-            code=code, qty=qty, limit_price=price,
-            exchange=setup["exchange"], signal=signal,
-        )
-        if getattr(resp, "rt_cd", None) != ErrorCode.SUCCESS.value:
-            self._logger.warning({"event": "overseas_intraday_vbo_entry_rejected", "code": code,
-                                  "msg": getattr(resp, "msg1", "")})
-            return None
-        self._positions[code] = {
-            "qty": qty, "entry_price": price, "stop_price": stop_price,
-            "last_price": price, "exchange": setup["exchange"],
-        }
-        self._entered_today.add(code)
-        return signal
-
-    async def _exit(self, code: str, price: float, *, reason: str) -> Optional[Dict[str, Any]]:
-        held = self._positions.get(code)
-        if held is None:
-            return None
-        signal = {
-            "strategy": self.STRATEGY_NAME,
-            "code": code,
-            "action": "SELL",
-            "date": self._session_date,
-            "entry_price": held["entry_price"],
-            "exit_price": price,
-            "exit_reason": reason,
-            "realized_pct": (price / held["entry_price"] - 1) * 100.0 if held["entry_price"] > 0 else 0.0,
-        }
-        resp = await self._orders.place_exit(
-            code=code, qty=held["qty"], limit_price=price, reason=reason,
-            exchange=held["exchange"], signal=signal,
-        )
-        if getattr(resp, "rt_cd", None) != ErrorCode.SUCCESS.value:
-            self._logger.warning({"event": "overseas_intraday_vbo_exit_rejected", "code": code,
-                                  "reason": reason, "msg": getattr(resp, "msg1", "")})
-            return None
-        self._positions.pop(code, None)
-        return signal
-
-    async def close_all(self, *, reason: str = "eod") -> List[Dict[str, Any]]:
-        """보유 전량을 마지막 폴링가로 청산한다(마감 전 EOD 청산용)."""
-        actions: List[Dict[str, Any]] = []
-        for code in list(self._positions.keys()):
-            held = self._positions[code]
-            action = await self._exit(code, held.get("last_price") or held["entry_price"], reason=reason)
-            if action:
-                actions.append(action)
-        return actions
+        return extras
 
     # ── 보조 ────────────────────────────────────────────────────────────
-
-    def _resolve_qty(self, price: float) -> int:
-        """사이징 미주입 시 1주(최소 단위)로 진입한다."""
-        if self._sizing_service is None:
-            return 1
-        try:
-            sized = self._sizing_service.size(limit_price_usd=price)
-        except Exception as e:
-            self._logger.warning({"event": "overseas_intraday_vbo_sizing_error", "error": str(e)})
-            return 0
-        try:
-            return int(sized.get("qty") or 0)
-        except (TypeError, ValueError):
-            return 0
 
     def _evaluate_macd_filter(self, confirmed_rows: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
         if not self._macd_filter_enabled:
@@ -382,10 +181,3 @@ class OverseasIntradayVBOService:
             2,
             self._macd_slow_period + self._macd_signal_period + self._macd_histogram_rising_bars,
         )
-
-    @staticmethod
-    def _f(x) -> float:
-        try:
-            return float(x or 0)
-        except (TypeError, ValueError):
-            return 0.0
