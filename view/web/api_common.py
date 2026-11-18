@@ -276,6 +276,12 @@ class OrderRequest(BaseModel):
     real_order_confirmation: str | None = None
 
 
+class OrderCancelRequest(BaseModel):
+    broker_order_no: str
+    order_orgno: str | None = None  # 미체결 조회의 주문채번지점번호(ord_gno_brno)
+    real_order_confirmation: str | None = None
+
+
 class EnvironmentRequest(BaseModel):
     is_paper: bool
     real_mode_confirmation: str | None = None

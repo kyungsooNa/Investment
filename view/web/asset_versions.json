@@ -64,8 +64,8 @@
     "sha256": "bb90c98fe9c75c243263909ac461a949e58537935316d4b0f8ccc63f6bfd7f55"
   },
   "js/order.js": {
-    "version": 2,
-    "sha256": "f428cc5d45e9ef8d9c6ce565ba8a5b2ac939eb5b2fdd5868da1cd235817e64d5"
+    "version": 3,
+    "sha256": "359789ee25619c02c06c8cda0649926bc2ab46bfdb91cfdac500c221c645ccea"
   },
   "js/overseas.js": {
     "version": 14,

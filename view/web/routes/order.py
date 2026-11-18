@@ -5,7 +5,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi import Query, Request
 from common.overseas_types import OverseasOrderRequest, OverseasCancelRequest
 from common.types import ErrorCode, ResCommonResponse
-from view.web.api_common import _get_ctx, _serialize_response, OrderRequest, require_role
+from view.web.api_common import _get_ctx, _serialize_response, OrderCancelRequest, OrderRequest, require_role
 from view.web.authorization import ADMIN
 from view.web.deployment_policy import (
     config_section,
@@ -86,6 +86,44 @@ async def place_order(req: OrderRequest, request: Request):
             **order_kwargs,
         )
     ctx.pm.log_timer("place_order", t_start)
+    return _serialize_response(resp)
+
+
+@router.get("/orders/unfilled")
+async def get_unfilled_orders():
+    """국내 미체결(정정/취소 가능) 주문 목록."""
+    ctx = _get_ctx()
+    if is_demo_mode(ctx):
+        return _serialize_response(ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="데모 모드", data=[]))
+    resp = await ctx.broker.inquire_unfilled_orders()
+    return _serialize_response(resp)
+
+
+@router.post("/order/cancel")
+async def cancel_order(req: OrderCancelRequest, request: Request):
+    """국내 미체결 주문 전량 취소.
+
+    브로커 직접 호출이 아니라 OrderExecutionService 를 거쳐 로컬 주문 상태머신과 맞춘다.
+    앱이 추적하지 않는 주문(HTS 등에서 낸 주문)은 서비스가 거절한다.
+    """
+    ctx = _get_ctx()
+    broker_order_no = req.broker_order_no.strip()
+    if not broker_order_no:
+        raise HTTPException(status_code=400, detail="broker_order_no가 필요합니다.")
+    if is_demo_mode(ctx):
+        raise HTTPException(status_code=400, detail="데모 모드에서는 주문 취소를 지원하지 않습니다.")
+    if _is_real_trading_mode(ctx):
+        blocked_response = _live_trading_block_response(ctx)
+        if blocked_response is not None:
+            return blocked_response
+        require_role(request, ADMIN)
+        if req.real_order_confirmation != "REAL":
+            raise HTTPException(status_code=400, detail="실전 주문 확인 문자열이 필요합니다.")
+
+    kwargs = {"broker_order_no": broker_order_no}
+    if req.order_orgno and req.order_orgno.strip():
+        kwargs["order_orgno"] = req.order_orgno.strip()
+    resp = await ctx.order_execution_service.cancel_order(**kwargs)
     return _serialize_response(resp)
 
 

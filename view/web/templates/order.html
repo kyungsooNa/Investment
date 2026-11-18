@@ -38,9 +38,14 @@
             </div>
         </div>
         <div id="order-result"></div>
+        <div class="card">
+            <h2>미체결 주문 <button class="btn" onclick="loadUnfilledOrders()">조회</button></h2>
+            <p style="color:#aaa; font-size:0.85em;">이 앱에서 낸 주문만 취소할 수 있습니다 (HTS 등 외부 주문은 거절됨).</p>
+            <div id="unfilled-orders-result"></div>
+        </div>
     </div>
 {% endblock %}
 
 {% block scripts %}
-<script src="/static/js/order.js?v=2"></script>
+<script src="/static/js/order.js?v=3"></script>
 {% endblock %}
