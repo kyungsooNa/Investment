@@ -39,6 +39,15 @@ class ApiFatalError(Exception):
 
 # 재시도 지수 백오프에 더하는 bounded jitter 비율 (base 대비 0~25%)
 _RETRY_JITTER_FRACTION = 0.25
+_SENSITIVE_HEADER_NAMES = {
+    "authorization",
+    "appkey",
+    "appsecret",
+    "secretkey",
+    "approval_key",
+    "access_token",
+}
+_REDACTED_HEADER_VALUE = "***"
 
 class KoreaInvestApiBase:
     """
@@ -181,9 +190,16 @@ class KoreaInvestApiBase:
         await self._async_session.aclose()
         self._logger.info("HTTP 클라이언트 세션이 종료되었습니다.")
 
+    @staticmethod
+    def _redact_headers(headers):
+        return {
+            key: _REDACTED_HEADER_VALUE if str(key).lower() in _SENSITIVE_HEADER_NAMES else value
+            for key, value in headers.items()
+        }
+
     def _log_headers(self):
         self._logger.debug("\nDEBUG: Headers being sent:")
-        for key, value in self._headers.build().items():
+        for key, value in self._redact_headers(self._headers.build()).items():
             try:
                 encoded_value = str(value).encode('latin-1', errors='ignore')
             except UnicodeEncodeError:
@@ -234,18 +250,19 @@ class KoreaInvestApiBase:
 
             request_headers.set_auth_bearer(access_token)
             headers = request_headers.build()
+            logged_headers = self._redact_headers(headers)
             # self._log_headers()
 
             if method.upper() == 'GET':
                 self._logger.debug(f"[GET] 요청 Url: {url}")
-                self._logger.debug(f"[GET] 요청 Headers: {headers}")
+                self._logger.debug(f"[GET] 요청 Headers: {logged_headers}")
                 self._logger.debug(f"[GET] 요청 Data: {params}")
                 return await self._async_session.get(url, headers=headers, params=params)
             elif method.upper() == 'POST':
                 json_body = _dumps(data) if data else None
 
                 self._logger.debug(f"[POST] 요청 Url: {url}")
-                self._logger.debug(f"[POST] 요청 Headers: {headers}")
+                self._logger.debug(f"[POST] 요청 Headers: {logged_headers}")
                 self._logger.debug(f"[POST] 요청 Data: {json_body}")
 
                 return await self._async_session.post(
