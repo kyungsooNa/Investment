@@ -166,6 +166,7 @@ overseas_stock:
     max_positions: 5
     market_timing_gate: true
   # RSI2 는 종가 기반이라 마감 15분 전부터 폴링가를 종가 대용으로 판정한다.
+  # 다른 장중 전략과 달리 EOD 청산하지 않고 멀티데이 보유한다(trailing 8% / time stop 20거래일).
   intraday_rsi2:
     enabled: false
     top_n: 20

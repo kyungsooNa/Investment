@@ -116,7 +116,7 @@
 - `services/us_market_regime_service.py` + `task/background/intraday/us_market_timing_daily_update_task.py`
   - 미국장 마켓타이밍. KIS에 해외 지수 TR이 없어 **프록시 ETF(QQQ/NASD) 일봉**으로
     국내 `MarketRegimeService` 와 동일한 MA 추세 로직을 돌린다(상속, 데이터 소스·캘린더만 교체)
-  - 게이트 소비처는 **장중 VBO 신규 진입 1곳** — bear/조회실패면 진입 차단(fail-closed).
+  - 게이트 소비처는 **장중 전략 7종의 신규 진입**(VBO 독립 구현 + 공통 베이스 `_is_regime_ok`) — bear/조회실패면 진입 차단(fail-closed).
     손절·EOD 청산은 국면과 무관하게 항상 동작. `intraday_vbo.market_timing_gate: false` 로 해제
   - 마감 후 dry-run 6종은 **차단하지 않고 국면 라벨만 기록** (bear 구간이 비면 게이트 사후 검증 불가)
   - 개장 30분 전 창에서 하루 1회 갱신 + 알림 (국내 `market_timing_daily_update` 와 동일 패턴)
@@ -127,6 +127,10 @@
     만들어 **심볼당 1회만** 조회하고 해당 심볼을 보는 전략에만 fan-out (전략별 태스크는
     겹치는 심볼을 전략 수만큼 중복 조회해 API 예산을 태운다)
   - 전략별 config opt-in (`overseas_stock.intraday_*.enabled`, 기본 전부 false)
+  - **보유 모델**: 기본은 당일 EOD 청산. **RSI2 만 멀티데이(v2, `EOD_EXIT=False`)** — 진입 창(마감 15분 전)이
+    EOD 창(마감 10분 전)과 붙어 v1 은 최대 5분 보유였다. v2 는 분석기 멀티데이 재구성과 같은
+    hard stop → trailing 8% → time stop 20거래일로 청산하고 `state_file` 로 날을 넘긴다.
+    보유 종목은 감시목록에 없어도 `watch_codes()` 에 포함돼 폴링된다
 - `services/us_session_volume_service.py`
   - 당일 거래량이 장중에 확정되지 않는 문제를 국내와 같은 방식으로 해결: 누적거래량
     (`tvol`)을 세션 경과 비율로 나눠 종일 거래량 환산 + 시간대별 허들 차등
