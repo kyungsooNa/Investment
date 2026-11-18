@@ -43,6 +43,9 @@ class OverseasIntradayStrategyBase:
     # 실제로 있어 `session_prepare_delay_min` 만으로는 부족하다. 빈 결과는 고정하지
     # 않고 폴링 패스 기준 이 횟수까지 다시 만들어 본다(1패스 = 기본 60초).
     EMPTY_SESSION_RETRY_PASSES = 10
+    # 마감 전 EOD 일괄 청산 대상인지. 멀티데이 보유 전략(RSI2 등)은 False 로 두고
+    # `_held_exit_reason` 에서 자체 청산 규칙을 구현한다.
+    EOD_EXIT = True
 
     def __init__(
         self,
@@ -120,6 +123,10 @@ class OverseasIntradayStrategyBase:
 
     def _entry_reason(self) -> str:
         return f"{self.EVENT_PREFIX}_entry"
+
+    def _held_exit_reason(self, held: Dict[str, Any], price: float, now) -> Optional[str]:
+        """손절 외 보유 청산 사유(선택). 청산하지 않으면 None."""
+        return None
 
     def _signal_extras(self, setup: Dict[str, Any], price: float) -> Dict[str, Any]:
         """진입 신호에 실을 전략별 근거값(선택)."""
@@ -220,6 +227,13 @@ class OverseasIntradayStrategyBase:
             entered = data.get("entered_today") or []
             if isinstance(entered, list):
                 self._entered_today = {str(c) for c in entered}
+        elif self._positions and not self.EOD_EXIT:
+            # 멀티데이 보유 전략은 이월이 정상이다 — 경고 대신 기록만 남긴다.
+            self._logger.info({
+                "event": f"{self.EVENT_PREFIX}_positions_carried",
+                "strategy": self.STRATEGY_NAME, "saved_date": saved_date,
+                "trade_date": trade_date, "codes": sorted(self._positions),
+            })
         elif self._positions:
             self._logger.warning({
                 "event": f"{self.EVENT_PREFIX}_stale_positions_restored",
@@ -245,6 +259,8 @@ class OverseasIntradayStrategyBase:
             "stop_price": self._f(held.get("stop_price")),
             "last_price": self._f(held.get("last_price")) or entry,
             "exchange": exchange,
+            "entry_date": str(held.get("entry_date") or ""),
+            "peak_price": self._f(held.get("peak_price")) or entry,
         }
 
     def _serialize_state(self) -> Dict[str, Any]:
@@ -259,6 +275,8 @@ class OverseasIntradayStrategyBase:
                     "last_price": held.get("last_price"),
                     "exchange": held["exchange"].value if hasattr(held["exchange"], "value")
                     else str(held["exchange"]),
+                    "entry_date": held.get("entry_date"),
+                    "peak_price": held.get("peak_price"),
                 }
                 for code, held in self._positions.items()
             },
@@ -346,7 +364,14 @@ class OverseasIntradayStrategyBase:
         return rows, None
 
     def watch_codes(self) -> List[str]:
-        return list(self._watch.keys())
+        """폴링 대상 = 감시목록 + 보유 종목.
+
+        전일에서 이어진 보유는 오늘 감시목록에 없을 수 있다 — 틱이 오지 않으면
+        손절·청산이 돌지 않는다.
+        """
+        codes = list(self._watch.keys())
+        codes.extend(code for code in self._positions if code not in self._watch)
+        return codes
 
     def get_state(self) -> Dict[str, Any]:
         return {
@@ -376,6 +401,10 @@ class OverseasIntradayStrategyBase:
             held["last_price"] = px
             if px <= held["stop_price"]:
                 return await self._exit(code, px, reason="stop")
+            now = self._clock.get_current_kst_time() if self._clock is not None else None
+            reason = self._held_exit_reason(held, px, now)
+            if reason:
+                return await self._exit(code, px, reason=reason)
             return None
 
         if setup is None or code in self._entered_today:
@@ -443,6 +472,7 @@ class OverseasIntradayStrategyBase:
         self._positions[code] = {
             "qty": qty, "entry_price": price, "stop_price": stop_price,
             "last_price": price, "exchange": setup["exchange"],
+            "entry_date": self._session_date or "", "peak_price": price,
         }
         self._entered_today.add(code)
         self._persist_state()
@@ -509,8 +539,13 @@ class OverseasIntradayStrategyBase:
         return None
 
     async def close_all(self, *, reason: str = "eod") -> List[Dict[str, Any]]:
-        """보유 전량을 마지막 폴링가로 청산한다(마감 전 EOD 청산용)."""
+        """보유 전량을 마지막 폴링가로 청산한다(마감 전 EOD 청산용).
+
+        멀티데이 보유 전략(`EOD_EXIT=False`)은 EOD 청산을 건너뛴다.
+        """
         actions: List[Dict[str, Any]] = []
+        if reason == "eod" and not self.EOD_EXIT:
+            return actions
         for code in list(self._positions.keys()):
             held = self._positions[code]
             action = await self._exit(
