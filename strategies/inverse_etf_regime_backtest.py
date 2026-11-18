@@ -19,7 +19,8 @@
 청산(라이브 우선순위):
   (1) regime     — 종가 시점 지수가 bear 이탈 → 종가 청산.
   (2) hard stop  — 저가가 비용 반영 net 손절선 이하. gap-through: 시가 체결.
-  (3) intraday   — 종가 < 시가이면서 전일 대비 intraday_invalidation_pct 이하 → 종가 청산.
+  (3) intraday   — 시가 대비 intraday_open_breach_pct 이하이면서
+                   전일 대비 intraday_invalidation_pct 이하 → 종가 청산.
   (4) trailing   — 고점×(1−trailing/100) 하향 이탈(이익 구간에서만).
   (5) partial    — 비용 반영 목표 순수익률 도달 시 지정 비율 1회 익절.
   (6) terminal   — 데이터 끝까지 보유 시 마지막 봉 종가 청산.
@@ -38,6 +39,7 @@ class InverseEtfRegimeBacktest:
         trend_ma_period: int = 20,
         stop_loss_pct: float = -5.0,
         intraday_invalidation_pct: float = -2.0,
+        intraday_open_breach_pct: float = -0.3,
         trailing_stop_pct: Optional[float] = 8.0,
         take_profit_pct: Optional[float] = 12.0,
         partial_sell_ratio: float = 0.5,
@@ -52,6 +54,7 @@ class InverseEtfRegimeBacktest:
         self._trend_ma_period = int(trend_ma_period)
         self._stop_loss_pct = float(stop_loss_pct)
         self._intraday_invalidation_pct = float(intraday_invalidation_pct)
+        self._intraday_open_breach_pct = float(intraday_open_breach_pct)
         self._trailing_stop_pct = trailing_stop_pct
         self._take_profit_pct = take_profit_pct
         self._partial_sell_ratio = float(partial_sell_ratio)
@@ -161,9 +164,10 @@ class InverseEtfRegimeBacktest:
                     break
 
                 # (3) 장중 추세 무효화 — 라이브 현재가를 일봉 종가로 근사
+                open_breach_pct = ((c / o) - 1) * 100 if o > 0 else 0.0
                 if (
                     o > 0
-                    and c < o
+                    and open_breach_pct <= self._intraday_open_breach_pct
                     and change_pct <= self._intraday_invalidation_pct
                 ):
                     exit_price, exit_reason, exit_idx = c, "intraday_invalidation", j

@@ -444,6 +444,21 @@ async def test_no_intraday_exit_for_minor_pullback(bear_setup):
 
 
 @pytest.mark.asyncio
+async def test_no_intraday_exit_for_one_tick_open_breach(bear_setup):
+    """당일 급락이어도 시가를 1틱만 밑돈 경우에는 장중 잡음으로 보고 보유한다."""
+    strat, sqs, regime, _, _, _ = bear_setup
+    regime.classify.return_value = _regime("bear")
+    sqs.get_current_price.return_value = _price_resp(
+        "1321", open_price="1322", change_rate="-2.8"
+    )
+    strat._position_state = {
+        "114800": InverseEtfPositionState(entry_price=1258, entry_date="20261113", peak_price=1359)
+    }
+
+    assert await strat.check_exits([_hold(buy_price=1258)]) == []
+
+
+@pytest.mark.asyncio
 async def test_exit_on_trailing_stop_from_peak(bear_setup):
     """고점 대비 트레일링 스톱(-8%) 도달 시 청산."""
     strat, sqs, regime, _, _, _ = bear_setup

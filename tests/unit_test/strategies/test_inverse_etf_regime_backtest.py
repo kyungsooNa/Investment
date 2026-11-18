@@ -240,6 +240,25 @@ def test_exit_on_intraday_trend_invalidation():
     assert trade["exit_price"] == 5100
 
 
+def test_no_intraday_exit_for_one_tick_open_breach():
+    """전일 대비 급락했어도 시가를 미세하게 밑돈 봉은 장중 무효화로 청산하지 않는다."""
+    bt = _bt(
+        stop_loss_pct=-20.0,
+        trailing_stop_pct=None,
+        trend_ma_period=5,
+        regime_ma_period=5,
+    )
+    index = _down_index(n=8)
+    inverse = _bars(
+        [5000, 5050, 5100, 5150, 5200, 5250, 5100, 5150],
+        opens=[5000, 5050, 5100, 5150, 5200, 5200, 5101, 5100],
+    )
+
+    trade = bt.run(index, inverse)["trades"][0]
+
+    assert trade["exit_reason"] == "terminal"
+
+
 def test_exit_on_hard_stop_with_gap_through():
     """하드 스탑: 저가가 스탑 이하로 갭다운하면 시가에 체결(보수)."""
     bt = _bt(stop_loss_pct=-5.0, trend_ma_period=5, regime_ma_period=5)
