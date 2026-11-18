@@ -773,3 +773,140 @@ async def test_get_overseas_orders_defaults_dates_to_today(web_client, mock_web_
         side_code="00",
         ccld_nccs_dvsn="00",
     )
+
+
+# ── 국내 미체결 조회 / 취소 ──────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_get_unfilled_orders_returns_broker_rows(web_client, mock_web_ctx):
+    """GET /api/orders/unfilled 는 브로커 미체결(정정/취소 가능) 목록을 그대로 돌려준다."""
+    rows = [{"odno": "0000012345", "pdno": "005930", "ord_qty": "10", "psbl_qty": "10"}]
+    mock_web_ctx.broker.inquire_unfilled_orders.return_value = ResCommonResponse(
+        rt_cd="0", msg1="정상", data=rows
+    )
+
+    response = web_client.get("/api/orders/unfilled")
+
+    assert response.status_code == 200
+    assert response.json()["rt_cd"] == "0"
+    assert response.json()["data"] == rows
+    mock_web_ctx.broker.inquire_unfilled_orders.assert_awaited_once_with()
+
+
+@pytest.mark.asyncio
+async def test_get_unfilled_orders_in_demo_mode_skips_broker(web_client, mock_web_ctx):
+    mock_web_ctx.full_config["deployment"] = {"demo_mode": True}
+
+    response = web_client.get("/api/orders/unfilled")
+
+    assert response.json()["rt_cd"] == "0"
+    assert response.json()["data"] == []
+    mock_web_ctx.broker.inquire_unfilled_orders.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_cancel_order_goes_through_order_execution_service(web_client, mock_web_ctx):
+    """취소는 브로커 직접 호출이 아니라 주문 상태머신을 거쳐야 로컬 주문 상태와 어긋나지 않는다."""
+    mock_web_ctx.order_execution_service.cancel_order.return_value = ResCommonResponse(
+        rt_cd="0", msg1="취소 접수", data=None
+    )
+
+    response = web_client.post(
+        "/api/order/cancel",
+        json={"broker_order_no": "0000012345", "order_orgno": "91252"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["rt_cd"] == "0"
+    mock_web_ctx.order_execution_service.cancel_order.assert_awaited_once_with(
+        broker_order_no="0000012345", order_orgno="91252"
+    )
+    mock_web_ctx.broker.cancel_stock_order.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_cancel_order_without_orgno_uses_service_default(web_client, mock_web_ctx):
+    mock_web_ctx.order_execution_service.cancel_order.return_value = ResCommonResponse(
+        rt_cd="0", msg1="취소 접수", data=None
+    )
+
+    web_client.post("/api/order/cancel", json={"broker_order_no": "0000012345"})
+
+    mock_web_ctx.order_execution_service.cancel_order.assert_awaited_once_with(
+        broker_order_no="0000012345"
+    )
+
+
+@pytest.mark.asyncio
+async def test_cancel_order_requires_order_no(web_client, mock_web_ctx):
+    response = web_client.post("/api/order/cancel", json={"broker_order_no": "  "})
+
+    assert response.status_code == 400
+    mock_web_ctx.order_execution_service.cancel_order.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_cancel_order_in_demo_mode_is_rejected(web_client, mock_web_ctx):
+    mock_web_ctx.full_config["deployment"] = {"demo_mode": True}
+
+    response = web_client.post("/api/order/cancel", json={"broker_order_no": "0000012345"})
+
+    assert response.status_code == 400
+    mock_web_ctx.order_execution_service.cancel_order.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_real_cancel_requires_confirmation(web_client, mock_web_ctx):
+    mock_web_ctx.env.is_paper_trading = False
+    mock_web_ctx.full_config["deployment"] = {"public_mode": False, "allow_live_trading": True}
+
+    response = web_client.post("/api/order/cancel", json={"broker_order_no": "0000012345"})
+
+    assert response.status_code == 400
+    mock_web_ctx.order_execution_service.cancel_order.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_operator_cannot_cancel_real_order(web_client, mock_web_ctx):
+    mock_web_ctx.env.is_paper_trading = False
+    mock_web_ctx.full_config["deployment"] = {"public_mode": False, "allow_live_trading": True}
+    _authenticate_as_operator(web_client, mock_web_ctx)
+
+    response = web_client.post(
+        "/api/order/cancel",
+        json={"broker_order_no": "0000012345", "real_order_confirmation": "REAL"},
+    )
+
+    assert response.status_code == 403
+    mock_web_ctx.order_execution_service.cancel_order.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_real_cancel_respects_live_trading_gate(web_client, mock_web_ctx):
+    mock_web_ctx.env.is_paper_trading = False
+    mock_web_ctx.full_config["deployment"] = {"public_mode": False, "allow_live_trading": False}
+
+    response = web_client.post(
+        "/api/order/cancel",
+        json={"broker_order_no": "0000012345", "real_order_confirmation": "REAL"},
+    )
+
+    assert response.json()["rt_cd"] == ErrorCode.ORDER_POLICY_BLOCKED.value
+    mock_web_ctx.order_execution_service.cancel_order.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_real_cancel_with_confirmation_calls_service(web_client, mock_web_ctx):
+    mock_web_ctx.env.is_paper_trading = False
+    mock_web_ctx.full_config["deployment"] = {"public_mode": False, "allow_live_trading": True}
+    mock_web_ctx.order_execution_service.cancel_order.return_value = ResCommonResponse(
+        rt_cd="0", msg1="취소 접수", data=None
+    )
+
+    response = web_client.post(
+        "/api/order/cancel",
+        json={"broker_order_no": "0000012345", "real_order_confirmation": "REAL"},
+    )
+
+    assert response.json()["rt_cd"] == "0"
+    mock_web_ctx.order_execution_service.cancel_order.assert_awaited_once()
