@@ -101,6 +101,74 @@ async def test_periodic_report_prompt_requires_balanced_half_year_review():
     assert "우발채무·소송" in user_prompt
 
 
+async def test_periodic_report_routine_positive_information_is_not_high_importance():
+    ai_client = MagicMock()
+    ai_client.complete = AsyncMock(
+        return_value=(
+            '{"summary":"분기 매출과 영업이익이 증가했고 자기주식 소각을 완료했습니다. '
+            'DRAM ASP 상승과 유상증자에 따른 희석도 확인됩니다.",'
+            '"score":75,"impact_score":3,'
+            '"reasons":["실적 개선과 주주환원"],'
+            '"event_key":"정기보고서|2026년3분기"}'
+        )
+    )
+    analyzer = AiDisclosureAnalyzer(ai_client, logger=MagicMock())
+    disclosure = DartDisclosure(
+        corp_class="Y",
+        corp_name="SK하이닉스",
+        corp_code="00164779",
+        stock_code="000660",
+        report_name="분기보고서 (2026.09)",
+        receipt_no="20261116000123",
+        filer_name="SK하이닉스",
+        receipt_date="20261116",
+        remarks="유",
+    )
+
+    result = await analyzer.analyze(
+        disclosure,
+        DisclosureImportance(30, "NORMAL", ["정기보고서"]),
+        "분기 실적, 자기주식 소각, DRAM ASP 및 유상증자 내역",
+    )
+
+    assert result.importance.score == 60
+    assert result.importance.level == "MEDIUM"
+    assert "정기보고서의 정례 정보만으로 HIGH 제한" in result.importance.reasons
+
+
+async def test_periodic_report_material_audit_risk_can_remain_high_importance():
+    ai_client = MagicMock()
+    ai_client.complete = AsyncMock(
+        return_value=(
+            '{"summary":"감사의견 거절과 계속기업 불확실성이 새로 확인됐습니다.",'
+            '"score":95,"impact_score":-5,'
+            '"reasons":["감사의견 거절"],'
+            '"event_key":"감사의견|거절|2026년3분기"}'
+        )
+    )
+    analyzer = AiDisclosureAnalyzer(ai_client, logger=MagicMock())
+    disclosure = DartDisclosure(
+        corp_class="K",
+        corp_name="테스트회사",
+        corp_code="00000000",
+        stock_code="000000",
+        report_name="분기보고서 (2026.09)",
+        receipt_no="20261116000999",
+        filer_name="테스트회사",
+        receipt_date="20261116",
+        remarks="코",
+    )
+
+    result = await analyzer.analyze(
+        disclosure,
+        DisclosureImportance(30, "NORMAL", ["정기보고서"]),
+        "감사의견 거절 및 계속기업 불확실성",
+    )
+
+    assert result.importance.score == 95
+    assert result.importance.level == "CRITICAL"
+
+
 async def test_short_term_borrowing_without_objective_growth_evidence_is_not_positive():
     ai_client = MagicMock()
     ai_client.complete = AsyncMock(

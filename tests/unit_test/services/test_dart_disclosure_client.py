@@ -286,6 +286,97 @@ async def test_fetch_periodic_financial_summary_prioritizes_core_results():
     assert params["fs_div"] == "CFS"
 
 
+async def test_fetch_periodic_financial_summary_returns_empty_when_current_quarter_is_unavailable():
+    http_client = AsyncMock()
+
+    def payload(revenue, operating_profit, net_profit):
+        return _response({
+            "status": "000",
+            "message": "정상",
+            "list": [
+                {
+                    "sj_div": "CIS", "account_id": "ifrs-full_Revenue",
+                    "thstrm_amount": str(revenue),
+                },
+                {
+                    "sj_div": "CIS", "account_id": "dart_OperatingIncomeLoss",
+                    "thstrm_amount": str(operating_profit),
+                },
+                {
+                    "sj_div": "CIS", "account_id": "ifrs-full_ProfitLoss",
+                    "thstrm_amount": str(net_profit),
+                },
+            ],
+        })
+
+    async def get_financial(_url, *, params, **_kwargs):
+        if params["reprt_code"] == "11014":
+            return _response({"status": "013", "message": "no data"})
+        return payload(79318700000000, 60542600000000, 93922600000000)
+
+    http_client.get.side_effect = get_financial
+    client = DartDisclosureClient("secret", http_client=http_client)
+    disclosure = DartDisclosure(
+        corp_class="Y", corp_name="SK하이닉스", corp_code="00164779",
+        stock_code="000660", report_name="분기보고서 (2026.09)",
+        receipt_no="20261116000123", filer_name="SK하이닉스",
+        receipt_date="20261116",
+    )
+
+    summary = await client.fetch_periodic_financial_summary(disclosure)
+
+    assert summary == ""
+
+
+async def test_fetch_periodic_financial_summary_does_not_compare_non_adjacent_quarters():
+    http_client = AsyncMock()
+
+    def payload(revenue, operating_profit, net_profit):
+        return _response({
+            "status": "000",
+            "message": "정상",
+            "list": [
+                {
+                    "sj_div": "CIS", "account_id": "ifrs-full_Revenue",
+                    "thstrm_amount": str(revenue),
+                },
+                {
+                    "sj_div": "CIS", "account_id": "dart_OperatingIncomeLoss",
+                    "thstrm_amount": str(operating_profit),
+                },
+                {
+                    "sj_div": "CIS", "account_id": "ifrs-full_ProfitLoss",
+                    "thstrm_amount": str(net_profit),
+                },
+            ],
+        })
+
+    async def get_financial(_url, *, params, **_kwargs):
+        report_code = params["reprt_code"]
+        if report_code == "11014":
+            return payload(104615500000000, 83333800000000, 39775600000000)
+        if report_code == "11012":
+            return _response({"status": "013", "message": "no data"})
+        if report_code == "11013":
+            return payload(52576300000000, 37610300000000, 40345900000000)
+        return _response({"status": "013", "message": "no data"})
+
+    http_client.get.side_effect = get_financial
+    client = DartDisclosureClient("secret", http_client=http_client)
+    disclosure = DartDisclosure(
+        corp_class="Y", corp_name="SK하이닉스", corp_code="00164779",
+        stock_code="000660", report_name="분기보고서 (2026.09)",
+        receipt_no="20261116000123", filer_name="SK하이닉스",
+        receipt_date="20261116",
+    )
+
+    summary = await client.fetch_periodic_financial_summary(disclosure)
+
+    assert "2026.3Q 1,046,155억 / 833,338억 / 397,756억" in summary
+    assert "전분기 대비:" not in summary
+    assert "2026.1Q" not in summary
+
+
 async def test_fetch_periodic_financial_summary_skips_non_periodic_report():
     http_client = AsyncMock()
     client = DartDisclosureClient("secret", http_client=http_client)
