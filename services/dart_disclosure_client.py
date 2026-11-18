@@ -211,8 +211,11 @@ class DartDisclosureClient:
             year, quarter = current_period
             for _ in range(5):
                 values = await quarter_values(year, quarter)
-                if values is not None:
-                    periods.append((year, quarter, values))
+                if values is None:
+                    if not periods:
+                        return ""
+                    break
+                periods.append((year, quarter, values))
                 quarter -= 1
                 if quarter == 0:
                     year -= 1

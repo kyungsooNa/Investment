@@ -32,6 +32,22 @@ _PERIODIC_REPORT_REQUIRED_TERMS = (
     ("시장 반응", ("주가", "시장 반응", "하락", "상승", "급락", "급등", "고점")),
     ("재무·리스크", ("연결재무제표", "설비투자", "현금흐름", "차입", "우발채무", "소송", "리스크", "위험")),
 )
+_PERIODIC_REPORT_HIGH_SEVERITY_TERMS = (
+    "감사의견 거절",
+    "감사의견거절",
+    "부적정의견",
+    "한정의견",
+    "계속기업 불확실",
+    "자본잠식",
+    "횡령",
+    "배임",
+    "상장폐지",
+    "거래정지",
+    "회생절차",
+    "영업정지",
+    "부도",
+    "채무불이행",
+)
 _SHORT_TERM_BORROWING_KEYWORD = "단기차입금증가"
 _OBJECTIVE_GROWTH_EVIDENCE_TERMS = (
     "단일판매ㆍ공급계약",
@@ -134,6 +150,8 @@ class AiDisclosureAnalyzer:
         return (
             "[정기보고서 점검 기준]\n"
             "- 사업/반기/분기보고서는 이미 알려진 긍정 이벤트만으로 HIGH를 주지 않는다.\n"
+            "- HIGH 이상은 감사의견·계속기업·자본잠식·횡령/배임 등 중대한 신규 위험이 "
+            "명시된 경우에만 부여한다.\n"
             "- 상반기 실적(매출·영업이익·순이익), 신주 발행·자기주식 등 자본거래와 희석 가능성, "
             "주가와 시장 반응, 연결재무제표·설비투자·현금흐름·우발채무·소송을 균형 있게 확인한다.\n"
             "- 위 항목 중 핵심 누락이 있으면 summary에 누락 항목을 명시하고 score는 60점 이하로 둔다.\n\n"
@@ -148,13 +166,19 @@ class AiDisclosureAnalyzer:
         if (
             not cls._is_periodic_report(disclosure.report_name)
             or analysis.importance.score < 70
-            or cls._has_periodic_report_balance(analysis)
         ):
             return analysis
+        if cls._has_periodic_report_high_severity(analysis):
+            return analysis
 
+        guard_reason = (
+            "정기보고서의 정례 정보만으로 HIGH 제한"
+            if cls._has_periodic_report_balance(analysis)
+            else "정기보고서 핵심 점검 항목 누락으로 HIGH 제한"
+        )
         reasons = list(dict.fromkeys([
             *analysis.importance.reasons,
-            "정기보고서 핵심 점검 항목 누락으로 HIGH 제한",
+            guard_reason,
         ]))
         importance = DisclosureImportance(
             score=60,
@@ -180,6 +204,11 @@ class AiDisclosureAnalyzer:
             if any(term.lower() in text.lower() for term in terms):
                 matched_categories += 1
         return matched_categories >= 3
+
+    @staticmethod
+    def _has_periodic_report_high_severity(analysis: AiDisclosureAnalysis) -> bool:
+        text = " ".join([analysis.summary, *analysis.importance.reasons]).lower()
+        return any(term.lower() in text for term in _PERIODIC_REPORT_HIGH_SEVERITY_TERMS)
 
     @classmethod
     def _apply_investment_impact_guard(
