@@ -1,0 +1,10 @@
+# 개발·테스트 의존성. 설치: pip install -r requirements-dev.txt (운영 의존성 포함)
+-r requirements.txt
+
+pytest
+pytest-cov
+pytest-xdist
+pytest-mock
+pytest-asyncio
+pytest-timeout>=2.1.0
+debugpy>=1.8.20

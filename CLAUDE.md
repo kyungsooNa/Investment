@@ -104,6 +104,7 @@ gh pr checks <PR번호> --watch
 - MCP 환경에서는 `pull_request_read` (`method: "get_check_runs"`)를 반복 호출해 체크가 끝날 때까지 기다린다. `sleep` 대기 대신 조회를 30~60초 간격으로 반복한다.
 
 **머지 게이트는 테스트 CI(`build-and-test`) 하나다.** 이것이 green 이면 머지한다.
+`python-compat`(상위 Python 버전 호환성 관찰, `continue-on-error`)도 게이트가 아니다 — red 면 보고만 한다.
 `review`(Gemini 코드리뷰 봇)는 **게이트가 아니다** — red 여도 머지를 막지 않는다:
 - Gemini API 가 503(과부하) 등으로 실패하는 일이 잦고, 이는 코드와 무관하다.
 - 이 봇은 종종 merge-base 가 아니라 최신 `origin/main` 과 2-dot 으로 비교해,
