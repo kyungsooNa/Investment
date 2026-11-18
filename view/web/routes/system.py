@@ -46,6 +46,7 @@ _SCHEDULE_TYPES = {
     "strategy_log_report": "after_market",
     "log_cleanup": "after_market",
     "notification_queue_task":  "always_on",
+    "heartbeat":                "always_on",
     "program_trading_monitor":  "always_on",
 }
 
