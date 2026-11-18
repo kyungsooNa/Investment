@@ -41,7 +41,7 @@ class InverseEtfRegimeStrategy(LiveStrategy):
     청산 (check_exits), 우선순위:
       1. 레짐 해제: regime_market 이 bear 에서 이탈 → 즉시 청산(헤지 종료)
       2. 하드 스탑: 진입가 대비 net -5%
-      3. 장중 추세 무효화: 시가 아래이면서 당일 -2% 이하
+      3. 장중 추세 무효화: 시가 대비 -0.3% 이하이면서 당일 -2% 이하
       4. 트레일링 스톱: 보유 중 고점 대비 -8%
       5. 위 청산 조건이 없고 net +12% 도달: 50% 1회 부분익절
 
@@ -249,6 +249,7 @@ class InverseEtfRegimeStrategy(LiveStrategy):
 
         pnl_pct = TransactionCostUtils.net_return_pct(buy_price, current)
         peak_drawdown_pct = (current - state.peak_price) / state.peak_price * 100 if state.peak_price else 0.0
+        open_breach_pct = (current - open_price) / open_price * 100 if open_price > 0 else 0.0
         reason: Optional[str] = None
 
         # 1) 레짐 해제: bear 이탈 → 헤지 종료
@@ -260,11 +261,12 @@ class InverseEtfRegimeStrategy(LiveStrategy):
         # 3) 장중 추세 무효화: 일봉 bear 캐시와 반대로 인버스가 당일 급락
         elif (
             open_price > 0
-            and current < open_price
+            and open_breach_pct <= self._cfg.intraday_open_breach_pct
             and change_rate <= self._cfg.intraday_invalidation_pct
         ):
             reason = (
-                f"장중 추세 무효화: 현재가 {current} < 시가 {open_price}, "
+                f"장중 추세 무효화: 시가 대비 {open_breach_pct:.2f}% "
+                f"≤ {self._cfg.intraday_open_breach_pct}%, "
                 f"등락률 {change_rate:.2f}% ≤ {self._cfg.intraday_invalidation_pct}%"
             )
         # 4) 트레일링 스톱: 고점 대비 하락
