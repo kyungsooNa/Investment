@@ -1102,6 +1102,40 @@ def test_intraday_vbo_built_with_order_path_locked(patched_service_container_dep
     assert task_cls.call_args.kwargs["shadow_journal"] is paper_journal
 
 
+@pytest.mark.parametrize("flag", [False, True])
+def test_intraday_paper_account_orders_follow_config(patched_service_container_deps, flag):
+    """모의계좌 실주문은 opt-in 이고, 켜도 실계좌 잠금(live_enabled=False)은 유지한다."""
+    from config.config_loader import AppConfig
+    from view.web.bootstrap.service_container import ServiceContainer
+
+    ctx = _make_fake_context()
+    ctx.enabled_market_modes = ["domestic", "overseas_us"]
+    ctx.overseas_stock_code_repository = MagicMock()
+    ctx.env.is_paper_trading = True
+    ctx.full_config = AppConfig(
+        web={"host": "localhost", "port": 8080},
+        overseas_stock={"intraday_paper_orders": flag, "intraday_vbo": {"enabled": True}},
+    )
+
+    with patch("view.web.bootstrap.overseas_bootstrap.OverseasPositionSizingService", autospec=True), \
+         patch("view.web.bootstrap.overseas_bootstrap.OverseasCandidateService", autospec=True), \
+         patch("view.web.bootstrap.overseas_bootstrap.OverseasVBODryRunService", autospec=True), \
+         patch("view.web.bootstrap.overseas_bootstrap.OverseasDryRunTask", autospec=True), \
+         patch("view.web.bootstrap.overseas_bootstrap.OverseasOrderExecutionService", autospec=True) as order_cls, \
+         patch("view.web.bootstrap.overseas_bootstrap.OverseasIntradayVBOService", autospec=True), \
+         patch("view.web.bootstrap.overseas_bootstrap.OverseasIntradayTask", autospec=True):
+        ServiceContainer(ctx).run()
+
+    kwargs = order_cls.call_args.kwargs
+    assert kwargs["live_enabled"] is False
+    assert kwargs["paper_account_orders"] is flag
+    assert kwargs["is_paper_trading_provider"]() is True
+    ctx.env.is_paper_trading = False
+    assert kwargs["is_paper_trading_provider"]() is False
+    # 끄면 broker 자체를 주입하지 않는다(구조적 잠금 유지).
+    assert kwargs["broker"] is (ctx.broker if flag else None)
+
+
 def test_intraday_uses_bounded_candidate_universe(patched_service_container_deps):
     """장중 준비가 300종목 전수 스캔으로 개장 후 수십 분 지연되면 안 된다.
 

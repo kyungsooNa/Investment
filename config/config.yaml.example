@@ -141,6 +141,9 @@ overseas_stock:
   # 없어, 장중에 실제로 도는 전략 경로를 별도로 둔다. 주문은 항상 would-be 기록만
   # 남는다(allow_live_trading 과 무관하게 자동 경로의 실주문은 Phase 5 까지 잠금).
   # 비용 주의: top_n × (정규장 390분 ÷ poll_interval) 만큼 해외현재가 API 를 호출한다.
+  # 장중 전략 주문을 KIS 모의계좌로 실제 전송한다. 앱이 **모의투자 모드일 때만** 동작하며
+  # (주문마다 모드 재확인) 실전 모드에서는 지금처럼 would-be 기록만 남는다. 실계좌 잠금은 불변.
+  intraday_paper_orders: false
   intraday_vbo:
     enabled: false
     poll_interval_sec: 60

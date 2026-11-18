@@ -602,6 +602,8 @@ class OverseasStockConfig(BaseModel):
     dryrun_max_qty: Optional[int] = Field(default=None, gt=0)
     vbo_macd_filter: OverseasVBOMACDFilterConfig = Field(default_factory=OverseasVBOMACDFilterConfig)
     intraday_vbo: OverseasIntradayVBOConfig = Field(default_factory=OverseasIntradayVBOConfig)
+    # 장중 전략 주문을 앱이 모의투자 모드일 때 KIS 모의계좌로 실제 전송한다(실계좌는 계속 잠금).
+    intraday_paper_orders: bool = False
     # 장중 승격 전략 6종 (VBO 외). 폴링 패스는 공유하므로 심볼 조회는 늘지 않는다.
     intraday_channel_breakout: OverseasIntradayStrategyConfig = Field(
         default_factory=OverseasIntradayStrategyConfig)
