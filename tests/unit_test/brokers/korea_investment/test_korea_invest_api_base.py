@@ -914,6 +914,29 @@ async def test_execute_request_post(monkeypatch):  # monkeypatch fixture 사용
 
 
 @pytest.mark.asyncio
+async def test_execute_request_redacts_sensitive_headers_from_debug_log(caplog):
+    mock_env = get_mock_env()
+    mock_trid_provider = MagicMock()
+    api = KoreaInvestApiBase(mock_env, logger=None, trid_provider=mock_trid_provider)
+
+    mock_response = MagicMock(spec=httpx.Response)
+    mock_response.json.return_value = {"rt_cd": "0"}
+    api._async_session.get = AsyncMock(return_value=mock_response)
+
+    with caplog.at_level(logging.DEBUG):
+        await api._execute_request("GET", "http://test", params={"code": "000660"}, data=None)
+
+    log_text = "\n".join(caplog.messages)
+    assert "test-token-for-success-case" not in log_text
+    assert "'appkey': 'dummy'" not in log_text
+    assert "'appsecret': 'dummy'" not in log_text
+    assert "'Authorization': '***'" in log_text
+    assert "'appkey': '***'" in log_text
+    assert "'appsecret': '***'" in log_text
+    assert "'Content-Type': 'application/json'" in log_text
+
+
+@pytest.mark.asyncio
 async def test_execute_request_invalid_method():
     mock_env = get_mock_env()
     mock_trid_provider = MagicMock()
@@ -947,7 +970,7 @@ async def test_log_headers_unicode_error_with_custom_object(caplog):
 
     # build()가 에러 유발 객체를 포함한 dict를 반환하도록 설정
     api._headers.build = MagicMock(return_value={
-        "Authorization": ExplodingStr(),
+        "X-Debug-Value": ExplodingStr(),
         "User-Agent": "test-agent"
     })
 
