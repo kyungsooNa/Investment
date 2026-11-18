@@ -481,7 +481,7 @@ class OverseasBootstrap:
 
         services = strategy_services
         if getattr(vbo_cfg, "enabled", False):
-            # VBO 는 공통 베이스 이전에 만들어진 독립 구현이라 생성자 인자가 다르다.
+            # VBO 는 K·손절·MACD 필터 인자를 따로 받는다(베이스 공통 인자는 `common` 과 같은 값).
             ctx.overseas_intraday_vbo_service = OverseasIntradayVBOService(
                 candidate_service=ctx.overseas_intraday_candidate_service,
                 stock_query_service=ctx.stock_query_service,
@@ -493,7 +493,7 @@ class OverseasBootstrap:
                 market_regime_service=ctx.us_market_regime_service,
                 indicator_service=ctx.indicator_service,
                 **self._vbo_macd_filter_opts(overseas_stock_cfg),
-                **_opts(vbo_cfg),
+                **_opts(vbo_cfg, OverseasIntradayVBOService),
             )
             services.append(ctx.overseas_intraday_vbo_service)
 

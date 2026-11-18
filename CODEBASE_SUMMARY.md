@@ -120,7 +120,10 @@
     손절·EOD 청산은 국면과 무관하게 항상 동작. `intraday_vbo.market_timing_gate: false` 로 해제
   - 마감 후 dry-run 6종은 **차단하지 않고 국면 라벨만 기록** (bear 구간이 비면 게이트 사후 검증 불가)
   - 개장 30분 전 창에서 하루 1회 갱신 + 알림 (국내 `market_timing_daily_update` 와 동일 패턴)
-- `services/overseas_intraday_strategy_base.py` + `overseas_intraday_{cb,rsi2,bgu,osb,pp}_service`
+- `services/overseas_intraday_strategy_base.py` + `overseas_intraday_{vbo,cb,rsi2,bgu,osb,pp,minervini_stage2}_service`
+  - **VBO 도 베이스를 상속한다**(2026-11-18 이관). 종전 독립 구현은 포지션 영속화·청산 재시도·
+    손절 거리 사이징이 없고 날이 바뀌면 보유를 지워, 실주문 잠금 해제 시 EOD 청산 실패 포지션이
+    조용히 사라지는 구조였다
   - **장중 승격 전략 6종**(VBO/CB/RSI2/BGU/OSB/PP). dry-run 은 마감 후 완성봉 사후 평가라
     발사 대상이 없어, 같은 규칙을 장중 폴링으로 재현한 라이브(paper) 경로
   - 전 전략이 `OverseasIntradayTask` **하나의 폴링 패스**를 공유한다 — 감시 심볼 합집합을
