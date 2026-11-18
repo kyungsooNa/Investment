@@ -8,7 +8,8 @@
    ```powershell
    conda activate py310
    cd c:\Users\Kyungsoo\Documents\Code\Investment
-   pip install -r requirements.txt
+   pip install -r requirements.txt        # 실행만 할 때
+   pip install -r requirements-dev.txt    # 테스트까지 돌릴 때 (pytest 등 포함)
    ```
 
 

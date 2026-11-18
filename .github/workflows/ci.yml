@@ -11,6 +11,37 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Python 3.10 은 2026-10 지원 종료. 상위 버전 호환성을 관찰만 하는 job 이다.
+  # continue-on-error 라 실패해도 워크플로·머지를 막지 않는다 — 머지 게이트는 build-and-test 하나.
+  # 이 job 이 안정적으로 green 이 되면 build-and-test 의 기준 버전 전환을 검토한다.
+  python-compat:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12"]
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python-version }}
+        cache: 'pip'
+    - uses: actions/setup-node@v4
+      with:
+        node-version: "22"
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements-dev.txt
+    - name: Create Mock Config and Data
+      run: |
+        mkdir -p data
+        cp config/config.yaml.example config/config.yaml
+    - name: Run tests
+      run: pytest tests -q
+
   build-and-test:
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -42,7 +73,7 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install -r requirements.txt
+        pip install -r requirements-dev.txt
 
     - name: Create Mock Config and Data
       run: |

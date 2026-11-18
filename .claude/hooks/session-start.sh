@@ -16,7 +16,7 @@ REPO_ROOT="${CLAUDE_PROJECT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && 
 cd "$REPO_ROOT"
 
 echo "[session-start] python 의존성 설치"
-python3 -m pip install --quiet --disable-pip-version-check -r requirements.txt
+python3 -m pip install --quiet --disable-pip-version-check -r requirements-dev.txt
 
 mkdir -p data
 
