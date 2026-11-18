@@ -602,6 +602,22 @@ M-10/M-11 과 같은 성격의 **완료 축 기록**이다. 남은 실행 항목
 
 주요 파일: `repositories/virtual_trade_repository.py`, `repositories/overseas_trade_repository.py`, `services/virtual_trade_market_guard.py`, `view/web/routes/virtual.py`, `view/web/templates/{virtual,overseas_virtual}.html`
 
+### M-14. 전체 코드 리뷰 후속 — 운영 안정성 [신규 등재 — 2026-11-18, #1095~#1098]
+
+전체 코드 탐색 리뷰에서 todo 에 없던 공백 5건을 찾아 처리했다. 코드는 완료, 남은 것은 운영 설정과 관찰이다.
+
+- [x] **replay 코퍼스 백업 (#1095)**: `data/backtest_microstructure/replay_*.json` 이 운영 백업 대상에 없었다(원천 DB 는 7/30일 보존 후 삭제 → 코퍼스가 유일 사본). `<backup_root>/archive/` 에 append-only 누적, 복사 실패 시 백업 failed.
+- [ ] **(사용자 액션) `operational_backup.backup_root` 를 데이터 디스크 밖으로 지정** — 비우면 `data/operational_backups`(같은 디스크)라 디스크 장애에 무방비다.
+- [x] **외부 생존 감시 heartbeat (#1096)**: 모든 알림이 프로세스 내부라 크래시·호스트 다운 시 무알림이던 것. TRADING 런타임이 `heartbeat.url` 로 주기 ping(suspend 무시).
+- [ ] **(사용자 액션) healthchecks.io 호환 감시 생성 후 `heartbeat.url` 설정** — 기본 비활성. 장중만 감시하려면 감시 서비스 cron 스케줄 사용. URL 은 비밀값.
+- [x] **국내 미체결 조회·취소 (#1097)**: `GET /api/orders/unfilled`, `POST /api/order/cancel`(상태머신 경유, 실전 가드 동일) + 주문 화면 카드. 앱 외부(HTS) 주문은 거절.
+- [ ] **(실계좌 확인) 미체결 취소의 `ord_gno_brno` → 주문채번지점번호 전달이 실전에서 수락되는지** 첫 사용 시 확인 — 단위 테스트로만 검증됨.
+- [x] **의존성 분리 + Python 3.12 관찰 CI (#1098)**: `requirements-dev.txt` 분리(가드 테스트), CI `python-compat (3.12)` 는 `continue-on-error` 관찰 전용.
+- [ ] **3.12 에서 실패하는 기존 테스트 2건 수정 → 기준 버전 전환 검토** (Python 3.10 은 2026-10 EOL): `test_size_time_rotating_handler_backup_limit`(백업 파일 순서 단언), `TestSubmitSuccess::test_pending_count_zero_after_completion`(`pending_count` 1≠0). 3.13 에서는 여기에 `test_force_exit_circuit_breaker_retries_after_safe_preflight`·`test_get_ohlcv_caching` 2건이 더 실패한다(2026-11-17 로컬 실측).
+- [x] **문서 정정 (ad9ecd4)**: momentum/GapUpPullback/program_buy_follow/volume_breakout*/strategy_executor 는 운영 import 0건인 레거시로 표기(삭제는 "레거시 전략 백테스트 통합 여부" 결정 대기), 수동매매 기록 시점(체결 확인 후) 정정.
+
+주요 파일: `services/operational_backup_service.py`, `task/background/always_on/heartbeat_ping_task.py`, `view/web/routes/order.py`, `.github/workflows/ci.yml`, `requirements-dev.txt`
+
 ---
 
 ## S. 스케줄러
