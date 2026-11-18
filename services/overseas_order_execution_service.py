@@ -24,11 +24,17 @@ canary/kill-switch/reconcile 다.
 이 서비스를 재사용한다(`live_enabled=True` 전용 인스턴스). 자동 전략 경로는 별도
 인스턴스라 `live_enabled=False` 잠금이 그대로 유지된다. 저널 기록이 섞이지 않도록
 `journal_strategy_name` 으로 경로를 구분한다.
+
+**모의계좌 실주문 (`paper_account_orders=True`)**: 실계좌 잠금은 그대로 두고, 앱이
+**모의투자 모드일 때만** 자동 전략 주문을 KIS 모의계좌로 실제 전송한다. 모드는 주문마다
+`is_paper_trading_provider` 로 다시 확인한다(웹에서 실전 전환 후 남은 인스턴스가 실계좌로
+쏘지 않도록). 조회 실패·broker 미주입이면 would-be 로 떨어진다(fail-closed).
 """
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, Optional
+from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal, InvalidOperation
+from typing import Any, Callable, Dict, Optional
 
 from common.overseas_types import OverseasExchange, OverseasOrderReport
 from common.types import ErrorCode, ResCommonResponse
@@ -38,6 +44,7 @@ from services.notification_service import NotificationCategory, NotificationLeve
 class OverseasOrderExecutionService:
     SIGNAL_SOURCE_LIVE = "overseas_live"
     SIGNAL_SOURCE_PAPER = "overseas_paper"
+    SIGNAL_SOURCE_PAPER_ACCOUNT = "overseas_paper_account"
 
     def __init__(
         self,
@@ -54,6 +61,8 @@ class OverseasOrderExecutionService:
         journal_strategy_name: str = "LarryWilliamsVBO_overseas",
         strategy_metadata: Optional[Dict[str, Dict[str, str]]] = None,
         logger: Optional[logging.Logger] = None,
+        paper_account_orders: bool = False,
+        is_paper_trading_provider: Optional[Callable[[], bool]] = None,
     ) -> None:
         # broker 는 live_enabled=True 일 때만 필요. paper 모드에선 None 허용(구조적 잠금).
         self._broker = broker
@@ -75,7 +84,26 @@ class OverseasOrderExecutionService:
         }
         # live 실주문 직전 차단 게이트(check_orders_allowed). paper 모드는 실주문이 없어 미적용.
         self._kill_switch = kill_switch
+        self._paper_account_orders = bool(paper_account_orders)
+        self._is_paper_trading_provider = is_paper_trading_provider
         self._logger = logger or logging.getLogger(__name__)
+
+    def _paper_account_active(self) -> bool:
+        """모의계좌 실주문 여부. 주문마다 모드를 다시 확인하고, 실패는 would-be(fail-closed)."""
+        if not self._paper_account_orders or self._broker is None:
+            return False
+        if self._is_paper_trading_provider is None:
+            return False
+        try:
+            return self._is_paper_trading_provider() is True
+        except Exception as e:
+            self._logger.warning({"event": "overseas_paper_mode_check_error", "error": str(e)})
+            return False
+
+    def _source(self, paper_account: bool) -> str:
+        if self._live_enabled:
+            return self.SIGNAL_SOURCE_LIVE
+        return self.SIGNAL_SOURCE_PAPER_ACCOUNT if paper_account else self.SIGNAL_SOURCE_PAPER
 
     async def place_entry(
         self,
@@ -133,8 +161,11 @@ class OverseasOrderExecutionService:
                 msg1="지정가는 0보다 커야 합니다(해외는 지정가만 지원).", data=None,
             )
         limit_str = self._price_str(limit_price)
+        paper_account = not self._live_enabled and self._paper_account_active()
+        if paper_account:
+            limit_str = self._tick_price_str(limit_price, side)
 
-        if not self._live_enabled:
+        if not self._live_enabled and not paper_account:
             resp = self._would_be_response(symbol, ex, side, int(qty), limit_str, exit_reason)
         else:
             blocked = await self._kill_switch_block(symbol, side)
@@ -147,9 +178,11 @@ class OverseasOrderExecutionService:
                 symbol=symbol, exchange=ex, side=side, qty=int(qty), limit_price=limit_str,
             )
 
-        self._record_journal(symbol, ex, side, int(qty), limit_str, signal, exit_reason, resp)
+        source = self._source(paper_account)
+        self._record_journal(symbol, ex, side, int(qty), limit_str, signal, exit_reason, resp, source)
         await self._record_ledger(symbol, ex, side, int(qty), limit_price, signal, exit_reason, resp)
-        await self._emit_order_notification(symbol, ex, side, int(qty), limit_str, signal, exit_reason, resp)
+        await self._emit_order_notification(
+            symbol, ex, side, int(qty), limit_str, signal, exit_reason, resp, source)
         return resp
 
     async def _risk_gate_block(
@@ -213,11 +246,10 @@ class OverseasOrderExecutionService:
     def _record_journal(
         self, symbol: str, ex: OverseasExchange, side: str, qty: int,
         limit_str: str, signal: Optional[Dict[str, Any]], exit_reason: Optional[str],
-        resp: ResCommonResponse,
+        resp: ResCommonResponse, source: str,
     ) -> None:
         if self._journal is None:
             return
-        source = self.SIGNAL_SOURCE_LIVE if self._live_enabled else self.SIGNAL_SOURCE_PAPER
         order = {
             "code": symbol, "side": side, "qty": qty, "limit_price": limit_str,
             "rt_cd": getattr(resp, "rt_cd", None),
@@ -316,7 +348,7 @@ class OverseasOrderExecutionService:
     async def _emit_order_notification(
         self, symbol: str, ex: OverseasExchange, side: str, qty: int,
         limit_str: str, signal: Optional[Dict[str, Any]], exit_reason: Optional[str],
-        resp: ResCommonResponse,
+        resp: ResCommonResponse, source: str,
     ) -> None:
         if self._notification_service is None:
             return
@@ -324,12 +356,14 @@ class OverseasOrderExecutionService:
             return
 
         signal = signal or {}
-        source = self.SIGNAL_SOURCE_LIVE if self._live_enabled else self.SIGNAL_SOURCE_PAPER
         action = str(signal.get("action") or side).upper()
         strategy = str(signal.get("strategy") or self._journal_strategy_name)
         side_label = "매수" if action == "BUY" else "매도"
         title = f"[{self._strategy_label(strategy)}] {symbol} {side_label} 주문 접수"
-        mode_label = "실전투자" if self._live_enabled else "모의투자"
+        mode_label = {
+            self.SIGNAL_SOURCE_LIVE: "실전투자",
+            self.SIGNAL_SOURCE_PAPER_ACCOUNT: "모의투자(모의계좌 주문)",
+        }.get(source, "모의투자")
         message_lines = [
             f"종목: {symbol}",
             f"주문: {self._format_usd(limit_str)} × {qty}주",
@@ -429,6 +463,21 @@ class OverseasOrderExecutionService:
         if f == int(f):
             return str(int(f)) if not isinstance(x, float) else str(f)
         return str(f)
+
+    @staticmethod
+    def _tick_price_str(x, side: str) -> str:
+        """미국주식 호가 단위로 맞춘다($1 이상 0.01, 미만 0.0001).
+
+        폴링가·재시도 지정가(-0.3% 등)는 소수점이 길어 그대로 내면 주문이 거부된다.
+        매수는 올림, 매도는 내림 — 폴링가보다 불리하게 깎이면 체결되지 않는다.
+        """
+        try:
+            value = Decimal(str(x))
+        except (InvalidOperation, ValueError):
+            return OverseasOrderExecutionService._price_str(x)
+        tick = Decimal("0.01") if value >= 1 else Decimal("0.0001")
+        rounding = ROUND_CEILING if side == "buy" else ROUND_FLOOR
+        return str(value.quantize(tick, rounding=rounding))
 
     @staticmethod
     def _format_usd(x) -> str:
