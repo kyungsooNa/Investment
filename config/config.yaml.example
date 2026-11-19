@@ -206,6 +206,11 @@ custtype: "P"
 market_open_time: "09:00"
 market_close_time: "15:40"
 market_timezone: "Asia/Seoul"
+# 수능일 등 날짜별 임시 거래시간 (YYYYMMDD)
+special_market_hours:
+  "20261119":
+    open: "10:00"
+    close: "16:40"
 
 # 계좌 보호용 Kill Switch
 kill_switch:
