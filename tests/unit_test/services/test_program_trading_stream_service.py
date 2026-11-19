@@ -770,6 +770,24 @@ def test_build_db_minute_persistence_status_caps_to_regular_session_and_includes
     assert "15:31" not in item["missing_minutes"]
 
 
+def test_build_db_minute_persistence_status_uses_special_market_session(manager):
+    """지연 개장일 DB 점검 구간은 10:00~16:30 정규장을 사용한다."""
+    clock = MarketClock(
+        special_market_hours={
+            "20261119": {"open": "10:00", "close": "16:40"},
+        }
+    )
+    manager.wire_alert_dependencies(market_clock=clock)
+
+    status = manager.build_db_minute_persistence_status(["005930"], "20261119")
+
+    assert status["window"]["start"] == "2026-11-19 10:00:00"
+    assert status["window"]["end"] == "2026-11-19 16:30:00"
+    assert status["expected_minute_count"] == 391
+    assert status["codes"]["005930"]["missing_minutes"][0] == "10:00"
+    assert status["codes"]["005930"]["missing_minutes"][-1] == "16:30"
+
+
 @pytest.mark.asyncio
 async def test_send_db_persistence_report_sends_summary(manager):
     """장마감 DB 저장 점검 결과를 텔레그램으로 전송한다."""

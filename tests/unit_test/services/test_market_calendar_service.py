@@ -28,7 +28,7 @@ def mock_deps():
         now = target_dt or tm.get_current_kst_time()
         if now.tzinfo is None:
             now = tm.market_timezone.localize(now)
-        return tm.market_timezone.localize(datetime(now.year, now.month, now.day, 15, 30, 0))
+        return tm.market_timezone.localize(datetime(now.year, now.month, now.day, 15, 40, 0))
     tm.get_market_close_time.side_effect = _get_market_close_time
 
     logger = MagicMock()
@@ -443,6 +443,25 @@ async def test_get_latest_market_close_time_today_after_close(manager, mock_deps
     assert latest_close.day == 4
     assert latest_close.hour == 15
     assert latest_close.minute == 40
+
+
+@pytest.mark.asyncio
+async def test_get_latest_market_close_time_uses_special_close_time():
+    """지연 마감일의 최근 마감 시각은 기본 15:40이 아닌 특별 16:40이다."""
+    clock = MarketClock(
+        special_market_hours={
+            "20261119": {"open": "10:00", "close": "16:40"},
+        }
+    )
+    now = clock.market_timezone.localize(datetime(2026, 11, 19, 17, 0))
+    clock.get_current_kst_time = MagicMock(return_value=now)
+    service = MarketCalendarService(clock)
+    service.is_business_day = AsyncMock(return_value=True)
+
+    latest_close = await service.get_latest_market_close_time()
+
+    assert latest_close == clock.market_timezone.localize(datetime(2026, 11, 19, 16, 40))
+
 
 @pytest.mark.asyncio
 async def test_get_latest_market_close_time_no_business_day_in_15_days(manager, mock_deps):

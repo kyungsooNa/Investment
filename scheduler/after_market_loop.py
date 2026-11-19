@@ -23,6 +23,7 @@ Usage::
 """
 import asyncio
 import logging
+from datetime import datetime, timedelta
 from typing import Optional, Callable, Awaitable
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -119,6 +120,33 @@ class AfterMarketLoop:
 
     # ── 지연 구동 catch-up ──
 
+    def _get_special_run_time(self, now) -> Optional[datetime]:
+        if (
+            not isinstance(now, datetime)
+            or self._market_clock is None
+            or (self._cron_hour, self._cron_minute) != (_CRON_HOUR, _CRON_MINUTE)
+        ):
+            return None
+
+        close_time = self._market_clock.get_market_close_time(now)
+        run_time = close_time + timedelta(minutes=1)
+        if (run_time.hour, run_time.minute) == (_CRON_HOUR, _CRON_MINUTE):
+            return None
+        return run_time
+
+    def _schedule_special_run(self, run_time: datetime) -> None:
+        self._scheduler.add_job(
+            self._run_job,
+            "date",
+            run_date=run_time,
+            misfire_grace_time=_MISFIRE_GRACE_SEC,
+            id=f"after_market_special_{self._label}_{run_time:%Y%m%d}",
+            replace_existing=True,
+        )
+        self._log.info(
+            f"[{self._label}] 특별 장마감 적용 — {run_time:%Y-%m-%d %H:%M} 실행 예약"
+        )
+
     async def _catch_up_if_needed(self) -> None:
         """프로그램 시작 시점이 15:41 이후이면, 당일 배치 누락 여부를 확인하고
         아직 실행하지 않았다면 즉시 1회 실행한다."""
@@ -126,6 +154,11 @@ class AfterMarketLoop:
             return
 
         now_kst = self._market_clock.get_current_kst_time()
+        special_run_time = self._get_special_run_time(now_kst)
+        if special_run_time is not None and now_kst < special_run_time:
+            self._schedule_special_run(special_run_time)
+            return
+
         past_close = now_kst.hour > self._cron_hour or (
             now_kst.hour == self._cron_hour and now_kst.minute >= self._cron_minute
         )
@@ -154,6 +187,12 @@ class AfterMarketLoop:
 
     async def _run_job(self) -> None:
         """APScheduler 또는 catch-up에 의해 호출되는 실제 작업 실행 메서드."""
+        now = self._market_clock.get_current_kst_time() if self._market_clock else None
+        special_run_time = self._get_special_run_time(now)
+        if special_run_time is not None and now < special_run_time:
+            self._schedule_special_run(special_run_time)
+            return
+
         today_str = (
             self._market_clock.get_current_kst_date_str() if self._market_clock else None
         )

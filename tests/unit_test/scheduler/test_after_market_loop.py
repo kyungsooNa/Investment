@@ -3,11 +3,13 @@ AfterMarketLoop / run_after_market_loop 단위 테스트.
 APScheduler + catch-up 로직 검증.
 """
 import asyncio
+from datetime import datetime
 import pytest
 
 from unittest.mock import MagicMock, AsyncMock, patch, mock_open
 
 from scheduler.after_market_loop import AfterMarketLoop, run_after_market_loop
+from core.market_clock import MarketClock
 import task.background.after_market.after_market_task_base as base_module
 import config.task_config_loader as loader_module
 from config.task_config_loader import load_after_market_delays as _load_after_market_delays
@@ -151,6 +153,57 @@ class TestSchedulerTimezoneAndCron:
 # ── _run_job 실행 로직 ──
 
 class TestRunJob:
+
+    async def test_special_close_defers_domestic_job_until_1641(self):
+        clock = MarketClock(
+            special_market_hours={
+                "20261119": {"open": "10:00", "close": "16:40"},
+            }
+        )
+        now = clock.market_timezone.localize(datetime(2026, 11, 19, 15, 41))
+        clock.get_current_kst_time = MagicMock(return_value=now)
+        clock.get_current_kst_date_str = MagicMock(return_value="20261119")
+        mcs = MagicMock()
+        mcs.get_latest_trading_date = AsyncMock(return_value="20261119")
+        callback = AsyncMock()
+        loop = AfterMarketLoop(
+            mcs=mcs,
+            market_clock=clock,
+            logger=MagicMock(),
+            on_market_closed=callback,
+            label="SpecialClose",
+        )
+        loop._scheduler = MagicMock()
+
+        await loop._run_job()
+
+        callback.assert_not_awaited()
+        run_date = loop._scheduler.add_job.call_args.kwargs["run_date"]
+        assert run_date == clock.market_timezone.localize(datetime(2026, 11, 19, 16, 41))
+
+    async def test_special_close_job_runs_at_1641(self):
+        clock = MarketClock(
+            special_market_hours={
+                "20261119": {"open": "10:00", "close": "16:40"},
+            }
+        )
+        now = clock.market_timezone.localize(datetime(2026, 11, 19, 16, 41))
+        clock.get_current_kst_time = MagicMock(return_value=now)
+        clock.get_current_kst_date_str = MagicMock(return_value="20261119")
+        mcs = MagicMock()
+        mcs.get_latest_trading_date = AsyncMock(return_value="20261119")
+        callback = AsyncMock()
+        loop = AfterMarketLoop(
+            mcs=mcs,
+            market_clock=clock,
+            logger=MagicMock(),
+            on_market_closed=callback,
+            label="SpecialClose",
+        )
+
+        await loop._run_job()
+
+        callback.assert_awaited_once_with("20261119")
 
     async def test_uses_clock_date_when_no_mcs(self):
         """mcs 미주입 시 market_clock 의 날짜를 latest_trading_date 로 사용한다.
