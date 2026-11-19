@@ -1,4 +1,4 @@
-"""장전 코스피 상승 마감(B) 확률 예측 서비스 단위 테스트."""
+"""장전 시가 갭상승(A) 확률 예측 서비스 단위 테스트."""
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta
@@ -9,6 +9,7 @@ import pytest
 from services.notification_service import NotificationCategory
 from services.premarket_direction_service import (
     FORECAST_FEATURES,
+    TARGETS,
     PremarketDirectionService,
     build_forecast_features,
 )
@@ -24,7 +25,7 @@ def _days(n, end=date(2026, 11, 18)):
 
 
 class FakeFetcher:
-    """미국 지표가 오르면 다음 한국 거래일 코스피가 오르도록 만든 합성 데이터."""
+    """미국 지표가 오르면 다음 한국 거래일 시가가 갭상승하도록 만든 합성 데이터."""
 
     def __init__(self, n=400, today="2026-11-19", today_us_move=0.02, missing=None):
         days = _days(n)
@@ -43,7 +44,7 @@ class FakeFetcher:
             self.kr.append({"date": d, "open": k, "high": k, "low": k, "close": k})
         # 오늘(장 시작 전) 행이 섞여 들어와도 학습/기준일에서 제외돼야 한다
         self.kr.append({"date": today, "open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0})
-        for spec in FORECAST_FEATURES:
+        for spec in {f for t in TARGETS for f in t.features}:
             sign = spec.sign
             self.us[spec.symbol] = [
                 {"date": r["date"], "close": r["close"] if sign > 0 else 10000.0 / r["close"]}
@@ -89,9 +90,12 @@ async def test_refresh_predicts_up_after_strong_us_session_and_notifies():
     assert result["ok"] is True
     assert result["date"] == "2026-11-19"
     assert result["base_date"] == "2026-11-18"          # 오늘 행은 기준일이 아니다
-    assert result["probability"] > 0.6
-    assert result["outlook"] == "상승 우세"
-    assert {f["name"] for f in result["features"]} == {s.name for s in FORECAST_FEATURES}
+    assert [t["code"] for t in result["targets"]] == ["KOSPI", "000660"]
+    for target in result["targets"]:
+        assert target["probability"] > 0.6
+        assert target["outlook"] == "갭상승 우세"
+        assert target["train_days"] >= 250
+    assert {f["name"] for f in result["features"]} == {"sox", "ndx", "spx", "ewy", "vix", "usdkrw", "mu"}
     spx = next(f for f in result["features"] if f["name"] == "spx")
     assert spx["value"] == pytest.approx(0.02)
     assert svc.get_latest() is result
@@ -99,7 +103,8 @@ async def test_refresh_predicts_up_after_strong_us_session_and_notifies():
     notifier.emit.assert_awaited_once()
     kwargs = notifier.emit.await_args.kwargs
     assert kwargs["category"] == NotificationCategory.STRATEGY
-    assert "코스피" in kwargs["title"]
+    assert "갭" in kwargs["title"]
+    assert "코스피" in kwargs["message"] and "SK하이닉스" in kwargs["message"]
     assert kwargs["metadata"]["event"] == "premarket_direction_forecast"
 
 
@@ -107,8 +112,15 @@ async def test_refresh_predicts_up_after_strong_us_session_and_notifies():
 async def test_refresh_predicts_down_after_weak_us_session():
     svc = _service(FakeFetcher(today_us_move=-0.02))
     result = await svc.refresh(notify=False)
-    assert result["probability"] < 0.4
-    assert result["outlook"] == "하락 우세"
+    assert all(t["probability"] < 0.4 for t in result["targets"])
+    assert all(t["outlook"] == "갭하락 우세" for t in result["targets"])
+
+
+@pytest.mark.asyncio
+async def test_hynix_target_uses_micron_on_top_of_base_features():
+    kospi, hynix = TARGETS
+    assert kospi.features == FORECAST_FEATURES
+    assert [f.name for f in hynix.features] == [f.name for f in FORECAST_FEATURES] + ["mu"]
 
 
 @pytest.mark.asyncio
@@ -144,12 +156,12 @@ async def test_get_or_compute_caches_per_day_without_notifying():
     first = await svc.get_or_compute()
     second = await svc.get_or_compute()
     assert first is second
-    assert fetcher.fetch_kr_index.await_count == 1
+    assert fetcher.fetch_kr_index.await_count == len(TARGETS)  # 대상별 1회
     notifier.emit.assert_not_awaited()
 
     clock.get_current_kst_time.return_value = datetime(2026, 11, 20, 8, 35)
     await svc.get_or_compute()
-    assert fetcher.fetch_kr_index.await_count == 2
+    assert fetcher.fetch_kr_index.await_count == 2 * len(TARGETS)
 
 
 @pytest.mark.asyncio

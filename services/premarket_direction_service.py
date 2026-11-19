@@ -1,8 +1,12 @@
-"""장전 코스피 상승 마감 확률 예측 (정보 표시 전용 — 매매 게이트에 연결하지 않는다).
+"""장전 시가 갭 방향 예측 (정보 표시 전용 — 매매 게이트에 연결하지 않는다).
 
-밤사이 미국장·VIX·환율 지표로 오늘 코스피가 전일 종가보다 높게 마감(B)할 확률을
-로지스틱 회귀로 추정한다. 지표 선정 근거: `scripts/run_premarket_direction_backtest.py`
-(2021-10~2026-11 표본외 정확도 65.4%, 기준선 54.1%).
+밤사이 미국장·VIX·환율 지표로 오늘 코스피·SK하이닉스 시가가 전일 종가보다 높게
+시작(갭상승)할 확률을 로지스틱 회귀로 추정한다. 지표 선정 근거:
+`scripts/run_premarket_direction_backtest.py` (2021-10~2026-11 표본외, 매일 재학습)
+— 코스피 76.4%(기준선 57.6%), 하이닉스(+마이크론) 75.0%(기준선 50.2%).
+
+갭 방향만 예측한다. 같은 지표로 시가→종가 방향은 예측되지 않았다(적중 ~50%) —
+밤사이 정보는 시가에 이미 반영되므로 장 시작 후 매매 근거로 쓰지 않는다.
 
 정렬 규칙(미래참조 방지): 한국 거래일 D 의 특징값은 미국 세션 날짜 T < D 인 종가만 쓴다.
 미국 T 세션은 KST 로 T+1 새벽에 마감하므로 D 장 시작 전에 확정된다. 값은
@@ -48,6 +52,21 @@ GAP = FeatureSpec("gap", "시가 갭(역추세, 시가 확정 후)", -1)
 # 백테스트에서 의미 없던 금리·전일 모멘텀은 운영 예측에서 뺀다.
 FORECAST_FEATURES: tuple[FeatureSpec, ...] = tuple(
     f for f in US_FEATURES if f.name in ("sox", "ndx", "spx", "ewy", "vix", "usdkrw")
+)
+MU = FeatureSpec("mu", "마이크론(MU)", +1, "MU")
+
+
+@dataclass(frozen=True)
+class ForecastTarget:
+    code: str  # 네이버 fchart 심볼
+    name: str
+    features: tuple[FeatureSpec, ...]
+
+
+# 하이닉스는 메모리 동종(마이크론)을 더하면 갭 적중이 +1.2%p 오른다. 코스피는 SOX 로 충분(효과 없음).
+TARGETS: tuple[ForecastTarget, ...] = (
+    ForecastTarget("KOSPI", "코스피", FORECAST_FEATURES),
+    ForecastTarget("000660", "SK하이닉스", FORECAST_FEATURES + (MU,)),
 )
 
 
@@ -138,9 +157,9 @@ def build_forecast_features(us: Dict[str, Sequence[dict]], prev_date: str, date:
 
 def _outlook(probability: float) -> str:
     if probability >= UP_THRESHOLD:
-        return "상승 우세"
+        return "갭상승 우세"
     if probability <= DOWN_THRESHOLD:
-        return "하락 우세"
+        return "갭하락 우세"
     return "중립"
 
 
@@ -175,9 +194,7 @@ class DailyHistoryFetcher:
 
 
 class PremarketDirectionService:
-    """장전 1회 코스피 상승 마감(종가>전일종가) 확률을 계산·보관·알림한다."""
-
-    INDEX_SYMBOL = "KOSPI"
+    """장전 1회 코스피·SK하이닉스 시가 갭상승(시가>전일종가) 확률을 계산·보관·알림한다."""
 
     def __init__(
         self,
@@ -213,7 +230,7 @@ class PremarketDirectionService:
         try:
             result = await self._compute(today)
         except Exception as exc:
-            self._logger.warning("장전 코스피 방향 예측 실패: %s", exc)
+            self._logger.warning("장전 시가 갭 예측 실패: %s", exc)
             result = {"ok": False, "date": today, "error": str(exc)}
         self._latest = result
         if notify and result["ok"] and self._notification_service is not None:
@@ -221,58 +238,65 @@ class PremarketDirectionService:
         return result
 
     async def _compute(self, today: str) -> dict:
-        kr = [r for r in await self._fetcher.fetch_kr_index(self.INDEX_SYMBOL, self._history_count)
-              if r["date"] < today]
-        us = {f.name: await self._fetcher.fetch_us(f.symbol) for f in FORECAST_FEATURES}
-        names = [f.name for f in FORECAST_FEATURES]
-        empty = [n for n in names if not us[n]]
-        if not kr or empty:
-            raise ValueError(f"시세 수신 실패: {', '.join(empty) or self.INDEX_SYMBOL}")
+        specs = list(dict.fromkeys(f for t in TARGETS for f in t.features))
+        us = {f.name: await self._fetcher.fetch_us(f.symbol) for f in specs}
+        empty = [f.name for f in specs if not us[f.name]]
+        if empty:
+            raise ValueError(f"시세 수신 실패: {', '.join(empty)}")
 
-        train = [r for r in build_dataset(kr, us) if all(r.get(n) is not None for n in names)]
-        if len(train) < self._min_train_days:
-            raise ValueError(f"학습 데이터 부족: {len(train)}일 < {self._min_train_days}일")
-        mu, sd, w, b = _fit_logit([[r[n] for n in names] for r in train], [r["up_close"] for r in train])
-
-        base_date = kr[-1]["date"]
-        feats = build_forecast_features(us, prev_date=base_date, date=today)
-        missing = [n for n in names if feats.get(n) is None]
-        if missing:
-            raise ValueError(f"오늘 지표 누락: {', '.join(missing)}")
-
-        z = [(feats[n] - mu[i]) / sd[i] for i, n in enumerate(names)]
-        logit = sum(w[i] * z[i] for i in range(len(names))) + b
-        probability = 1.0 / (1.0 + math.exp(-logit))
+        targets, feats, base_date = [], {}, None
+        for target in TARGETS:
+            kr = [r for r in await self._fetcher.fetch_kr_index(target.code, self._history_count)
+                  if r["date"] < today]
+            if not kr:
+                raise ValueError(f"시세 수신 실패: {target.code}")
+            names = [f.name for f in target.features]
+            prediction, target_feats = self._predict(kr, {n: us[n] for n in names}, names, today)
+            targets.append({"code": target.code, "name": target.name, **prediction})
+            feats.update(target_feats)
+            base_date = base_date or kr[-1]["date"]
         return {
             "ok": True,
             "date": today,
             "base_date": base_date,
-            "probability": probability,
-            "outlook": _outlook(probability),
-            "train_days": len(train),
-            "features": [
-                {"name": f.name, "label": f.label, "value": feats[f.name],
-                 "contribution": float(w[i] * z[i])}
-                for i, f in enumerate(FORECAST_FEATURES)
-            ],
+            "targets": targets,
+            "features": [{"name": f.name, "label": f.label, "value": feats[f.name]} for f in specs],
         }
 
+    def _predict(self, kr: List[dict], us: Dict[str, List[dict]], names: List[str], today: str):
+        train = [r for r in build_dataset(kr, us) if all(r.get(n) is not None for n in names)]
+        if len(train) < self._min_train_days:
+            raise ValueError(f"학습 데이터 부족: {len(train)}일 < {self._min_train_days}일")
+        mu, sd, w, b = _fit_logit([[r[n] for n in names] for r in train], [r["up_gap"] for r in train])
+
+        feats = build_forecast_features(us, prev_date=kr[-1]["date"], date=today)
+        missing = [n for n in names if feats.get(n) is None]
+        if missing:
+            raise ValueError(f"오늘 지표 누락: {', '.join(missing)}")
+        z = [(feats[n] - mu[i]) / sd[i] for i, n in enumerate(names)]
+        probability = 1.0 / (1.0 + math.exp(-(sum(w[i] * z[i] for i in range(len(names))) + b)))
+        prediction = {"probability": probability, "outlook": _outlook(probability), "train_days": len(train)}
+        return prediction, feats
+
     async def _notify(self, result: dict) -> None:
+        lines = [
+            f"• {t['name']} 갭상승 확률 {t['probability'] * 100:.0f}% ({t['outlook']})"
+            for t in result["targets"]
+        ]
         moves = " · ".join(f"{f['label']} {f['value'] * 100:+.2f}%" for f in result["features"])
         message = (
-            f"오늘 코스피 상승 마감 확률 {result['probability'] * 100:.0f}% ({result['outlook']})\n"
-            f"• 기준: {result['base_date']} 종가 대비 · 학습 {result['train_days']:,}일\n"
+            "\n".join(lines) + "\n"
+            f"• 기준: {result['base_date']} 종가 대비\n"
             f"• 밤사이: {moves}\n"
-            "※ 참고 정보 — 백테스트 표본외 정확도 약 65%, 매매 신호 아님"
+            "※ 시가 갭 방향만 예측(백테스트 적중 약 75%) — 장 시작 후 매매 근거 아님"
         )
         await self._notification_service.emit(
             category=NotificationCategory.STRATEGY,
             level=NotificationLevel.INFO,
-            title="장전 코스피 방향 예측",
+            title="장전 시가 갭 예측",
             message=message,
             metadata={
                 "event": "premarket_direction_forecast",
-                "probability": result["probability"],
-                "outlook": result["outlook"],
+                "targets": {t["code"]: round(t["probability"], 4) for t in result["targets"]},
             },
         )

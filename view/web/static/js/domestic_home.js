@@ -140,21 +140,23 @@ function _formatSignedPct(ratio) {
 }
 
 function _renderPremarketDirection(box, data) {
-    const prob = Number(data.probability || 0);
-    const probClass = prob >= 0.6 ? 'text-red' : (prob <= 0.4 ? 'text-blue' : '');
+    const targets = (data.targets || []).map(target => {
+        const prob = Number(target.probability || 0);
+        const probClass = prob >= 0.6 ? 'text-red' : (prob <= 0.4 ? 'text-blue' : '');
+        return `<div class="premarket-direction-head">
+            <span class="premarket-direction-name">${escapeHtml(target.name || target.code || '')}</span>
+            <span class="premarket-direction-prob ${probClass}">${Math.round(prob * 100)}%</span>
+            <strong>${escapeHtml(target.outlook || '')}</strong>
+        </div>`;
+    }).join('');
     const features = (data.features || []).map(feature => {
         const value = Number(feature.value || 0);
         const cls = value > 0 ? 'text-red' : (value < 0 ? 'text-blue' : '');
         return `<li>${escapeHtml(feature.label || feature.name || '')} <span class="${cls}">${_formatSignedPct(value)}</span></li>`;
     }).join('');
-    box.innerHTML = `
-        <div class="premarket-direction-head">
-            <span class="premarket-direction-prob ${probClass}">${Math.round(prob * 100)}%</span>
-            <strong>${escapeHtml(data.outlook || '')}</strong>
-            <span class="small">${escapeHtml(data.base_date || '')} 종가 대비 · 학습 ${Number(data.train_days || 0).toLocaleString()}일</span>
-        </div>
+    box.innerHTML = `${targets}
         <ul class="premarket-direction-features">${features}</ul>
-        <p class="small">참고 정보 — 백테스트 표본외 정확도 약 65%, 매매 신호 아님</p>`;
+        <p class="small">${escapeHtml(data.base_date || '')} 종가 대비 시가 갭 방향만 예측(백테스트 적중 약 75%) — 장 시작 후 매매 근거 아님</p>`;
 }
 
 async function loadPremarketDirection() {

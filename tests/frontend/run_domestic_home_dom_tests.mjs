@@ -47,9 +47,10 @@ const PREMARKET_REPORT = {
     ok: true,
     date: "2026-11-19",
     base_date: "2026-11-18",
-    probability: 0.723,
-    outlook: "상승 우세",
-    train_days: 1450,
+    targets: [
+      { code: "KOSPI", name: "코스피", probability: 0.723, outlook: "갭상승 우세", train_days: 1450 },
+      { code: "000660", name: "SK하이닉스", probability: 0.31, outlook: "갭하락 우세", train_days: 1450 },
+    ],
     features: [
       { name: "spx", label: "S&P500", value: 0.0123, contribution: 0.4 },
       { name: "vix", label: "VIX 변화율", value: -0.051, contribution: 0.2 },
@@ -169,17 +170,21 @@ test("주도 테마 데이터가 없으면 안내 문구 표시", async () => {
   assert(box.textContent.includes("수집 중"), "빈 데이터 안내 누락");
 });
 
-test("장전 코스피 상승 마감 확률과 밤사이 지표를 표시", async () => {
+test("장전 시가 갭상승 확률을 대상별로, 밤사이 지표와 함께 표시", async () => {
   const window = await makeWindow();
   const box = window.document.getElementById("premarket-direction");
   assert(window.__fetched.includes("/api/market/premarket-direction"), "장전 예측 API 미호출");
-  assert(box.textContent.includes("72%"), "확률 누락");
-  assert(box.textContent.includes("상승 우세"), "판정 누락");
-  assert(box.querySelector(".premarket-direction-prob.text-red") !== null, "상승 우세 색상 누락");
+  const rows = box.querySelectorAll(".premarket-direction-head");
+  assert(rows.length === 2, `대상 수 불일치: ${rows.length}`);
+  assert(rows[0].textContent.includes("코스피") && rows[0].textContent.includes("72%"), "코스피 확률 누락");
+  assert(rows[0].textContent.includes("갭상승 우세"), "코스피 판정 누락");
+  assert(rows[0].querySelector(".premarket-direction-prob.text-red") !== null, "갭상승 우세 색상 누락");
+  assert(rows[1].textContent.includes("SK하이닉스") && rows[1].textContent.includes("31%"), "하이닉스 확률 누락");
+  assert(rows[1].querySelector(".premarket-direction-prob.text-blue") !== null, "갭하락 우세 색상 누락");
   assert(box.textContent.includes("S&P500") && box.textContent.includes("+1.23%"), "지표 등락 누락");
   assert(box.textContent.includes("-5.10%"), "음수 지표 누락");
   assert(box.textContent.includes("2026-11-18"), "기준일 누락");
-  assert(box.textContent.includes("매매 신호 아님"), "참고용 안내 누락");
+  assert(box.textContent.includes("장 시작 후 매매 근거 아님"), "참고용 안내 누락");
 });
 
 test("장전 예측 실패 시 사유를 표시", async () => {
