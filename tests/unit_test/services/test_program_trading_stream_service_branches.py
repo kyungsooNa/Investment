@@ -226,7 +226,7 @@ async def test_hourly_tick_alert_loop_iterates_then_cancels(svc):
     svc._is_market_open_for_tick_alert = AsyncMock(side_effect=[True, False])
     svc.send_subscribed_last_tick_alert = AsyncMock(return_value=True)
     with patch(f"{MODULE}.asyncio.sleep",
-               new=AsyncMock(side_effect=[None, None, asyncio.CancelledError()])):
+               new=AsyncMock(side_effect=[None, asyncio.CancelledError()])):
         with pytest.raises(asyncio.CancelledError):
             await svc._hourly_tick_alert_loop()
     svc.send_subscribed_last_tick_alert.assert_awaited_once()

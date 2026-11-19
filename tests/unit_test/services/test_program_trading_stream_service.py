@@ -872,6 +872,45 @@ def test_get_background_task_status_reports_internal_loops(manager):
 
 
 @pytest.mark.asyncio
+async def test_hourly_tick_alert_loop_sends_immediately_when_market_open(manager):
+    """장중 재시작 시 첫 tick 상태 알림을 한 시간 뒤로 미루지 않는다."""
+    manager.send_subscribed_last_tick_alert = AsyncMock(return_value=True)
+    mock_mcs = MagicMock()
+    mock_mcs.is_market_open_now = AsyncMock(return_value=True)
+    manager.wire_alert_dependencies(market_calendar_service=mock_mcs)
+
+    with patch(
+        "services.program_trading_stream_service.asyncio.sleep",
+        new_callable=AsyncMock,
+        side_effect=asyncio.CancelledError,
+    ):
+        with pytest.raises(asyncio.CancelledError):
+            await manager._hourly_tick_alert_loop()
+
+    manager.send_subscribed_last_tick_alert.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_hourly_tick_alert_loop_retries_when_subscriptions_are_not_ready(manager):
+    """장중 초기 구독 복원 전이면 한 시간이 아닌 1분 뒤 다시 전송한다."""
+    manager.send_subscribed_last_tick_alert = AsyncMock(side_effect=[False, True])
+    mock_mcs = MagicMock()
+    mock_mcs.is_market_open_now = AsyncMock(return_value=True)
+    manager.wire_alert_dependencies(market_calendar_service=mock_mcs)
+
+    with patch(
+        "services.program_trading_stream_service.asyncio.sleep",
+        new_callable=AsyncMock,
+        side_effect=[None, asyncio.CancelledError],
+    ) as sleep_mock:
+        with pytest.raises(asyncio.CancelledError):
+            await manager._hourly_tick_alert_loop()
+
+    assert manager.send_subscribed_last_tick_alert.await_count == 2
+    assert sleep_mock.await_args_list[0].args == (60,)
+
+
+@pytest.mark.asyncio
 async def test_hourly_tick_alert_loop_skips_when_market_closed(manager):
     """장마감 후에는 시간별 tick 상태 알림을 보내지 않는다."""
     manager.send_subscribed_last_tick_alert = AsyncMock(return_value=True)
@@ -883,8 +922,9 @@ async def test_hourly_tick_alert_loop_skips_when_market_closed(manager):
         "services.program_trading_stream_service.asyncio.sleep",
         new_callable=AsyncMock,
         side_effect=[None, asyncio.CancelledError],
-    ):
+    ) as sleep_mock:
         with pytest.raises(asyncio.CancelledError):
             await manager._hourly_tick_alert_loop()
 
     manager.send_subscribed_last_tick_alert.assert_not_awaited()
+    sleep_mock.assert_any_await(60)
