@@ -124,15 +124,30 @@ class AfterMarketLoop:
         if (
             not isinstance(now, datetime)
             or self._market_clock is None
-            or (self._cron_hour, self._cron_minute) != (_CRON_HOUR, _CRON_MINUTE)
         ):
             return None
 
-        close_time = self._market_clock.get_market_close_time(now)
-        run_time = close_time + timedelta(minutes=1)
-        if (run_time.hour, run_time.minute) == (_CRON_HOUR, _CRON_MINUTE):
+        base_close_hour, base_close_minute = map(
+            int, self._market_clock.market_close_time_str.split(":")
+        )
+        base_close_time = now.replace(
+            hour=base_close_hour,
+            minute=base_close_minute,
+            second=0,
+            microsecond=0,
+        )
+        actual_close_time = self._market_clock.get_market_close_time(now)
+        close_shift = actual_close_time - base_close_time
+        if close_shift == timedelta(0):
             return None
-        return run_time
+
+        base_run_time = now.replace(
+            hour=self._cron_hour,
+            minute=self._cron_minute,
+            second=0,
+            microsecond=0,
+        )
+        return base_run_time + close_shift
 
     def _schedule_special_run(self, run_time: datetime) -> None:
         self._scheduler.add_job(
@@ -159,7 +174,7 @@ class AfterMarketLoop:
             self._schedule_special_run(special_run_time)
             return
 
-        past_close = now_kst.hour > self._cron_hour or (
+        past_close = special_run_time is not None or now_kst.hour > self._cron_hour or (
             now_kst.hour == self._cron_hour and now_kst.minute >= self._cron_minute
         )
         if not past_close:
