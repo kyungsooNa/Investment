@@ -638,6 +638,9 @@ class AppConfig(BaseModel):
     use_login: bool = True
     strategy_scheduler_dry_run: bool = False
 
+    # 임시 지연 개장·연장 거래일. 예: {"20261119": {"open": "10:00", "close": "16:40"}}
+    special_market_hours: Dict[str, Dict[str, str]] = Field(default_factory=dict)
+
     # Operating profile (P0 0-7): canary 5% 노출 vs real_limited 30% vs real_full 95% 운영 한도 분리.
     # paper 모드에서는 base 값을 사용하므로 profile 무관. real 모드에서 overlay 선택.
     operating_profile: Literal["canary", "real_limited", "real_full"] = "canary"

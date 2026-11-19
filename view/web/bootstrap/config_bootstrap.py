@@ -55,6 +55,7 @@ class ConfigBootstrap:
             market_close_time=config_dict.get("market_close_time", "15:40"),
             timezone=config_dict.get("market_timezone", "Asia/Seoul"),
             logger=ctx.logger,
+            special_market_hours=config_dict.get("special_market_hours"),
         )
         ctx.virtual_repo.tm = ctx.market_clock
         ctx.virtual_trade_service.tm = ctx.market_clock

@@ -13,11 +13,19 @@ class MarketClock:
     공휴일 및 실제 영업일 판단은 MarketCalendarService에서 수행해야 합니다.
     """
 
-    def __init__(self, market_open_time="09:00", market_close_time="15:40", timezone="Asia/Seoul", logger=None):
+    def __init__(
+        self,
+        market_open_time="09:00",
+        market_close_time="15:40",
+        timezone="Asia/Seoul",
+        logger=None,
+        special_market_hours=None,
+    ):
         self.market_open_time_str = market_open_time
         self.market_close_time_str = market_close_time
         self.timezone_name = timezone
         self.logger = logger if logger else logging.getLogger(__name__)
+        self.special_market_hours = special_market_hours or {}
 
         # [최적화 1] 시간 문자열을 한 번만 파싱하여 time 객체로 캐싱
         open_h, open_m = map(int, self.market_open_time_str.split(':'))
@@ -31,6 +39,20 @@ class MarketClock:
             self.logger.error(f"알 수 없는 시간대: {self.timezone_name}. 'Asia/Seoul'로 기본 설정합니다.")
             self.timezone_name = "Asia/Seoul"
             self.market_timezone = pytz.timezone(self.timezone_name)
+
+    def _get_session_time_objects(self, target_dt: datetime) -> tuple[dt_time, dt_time]:
+        """대상 날짜의 개장·마감 시각을 반환한다.
+
+        날짜별 설정이 없으면 생성자에 전달된 기본 거래시간을 사용한다.
+        """
+        override = self.special_market_hours.get(target_dt.strftime("%Y%m%d"), {})
+        if not isinstance(override, dict):
+            override = {}
+        open_text = override.get("open", self.market_open_time_str)
+        close_text = override.get("close", self.market_close_time_str)
+        open_hour, open_minute = map(int, open_text.split(":"))
+        close_hour, close_minute = map(int, close_text.split(":"))
+        return dt_time(open_hour, open_minute), dt_time(close_hour, close_minute)
 
     @classmethod
     def for_us_equities(cls, logger=None) -> "MarketClock":
@@ -61,7 +83,8 @@ class MarketClock:
             return False
 
         # [최적화 2] 무거운 datetime 조합과 타임존 연산 없이 순수 시간(time) 객체만으로 비교
-        return self._open_time_obj <= now.time() <= self._close_time_obj
+        open_time, close_time = self._get_session_time_objects(now)
+        return open_time <= now.time() <= close_time
 
     def is_nxt_operating_hours(self, now=None) -> bool:
         """
@@ -85,20 +108,22 @@ class MarketClock:
     def get_market_open_time(self, target_dt: Optional[datetime] = None) -> datetime:
         """오늘 날짜 또는 지정된 날짜 기준 시장 개장 시간(09:00) 반환"""
         now = target_dt or self.get_current_kst_time()
+        open_time, _ = self._get_session_time_objects(now)
         return self.market_timezone.localize(datetime(
             now.year, now.month, now.day,
-            hour=self._open_time_obj.hour,
-            minute=self._open_time_obj.minute,
+            hour=open_time.hour,
+            minute=open_time.minute,
             second=0, microsecond=0
         ))
 
     def get_market_close_time(self, target_dt: Optional[datetime] = None) -> datetime:
         """오늘 날짜 또는 지정된 날짜 기준 시장 마감 시간(15:40) 반환"""
         now = target_dt or self.get_current_kst_time()
+        _, close_time = self._get_session_time_objects(now)
         return self.market_timezone.localize(datetime(
             now.year, now.month, now.day,
-            hour=self._close_time_obj.hour,
-            minute=self._close_time_obj.minute,
+            hour=close_time.hour,
+            minute=close_time.minute,
             second=0, microsecond=0
         ))
 

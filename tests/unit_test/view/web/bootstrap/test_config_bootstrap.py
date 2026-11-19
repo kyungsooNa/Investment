@@ -63,6 +63,18 @@ def test_config_bootstrap_populates_env_and_market_clock(patched_bootstrap_deps)
     assert ctx.market_clock is patched_bootstrap_deps["clock_cls"].return_value
 
 
+def test_config_bootstrap_passes_special_market_hours(patched_bootstrap_deps):
+    """임시 거래시간 설정을 MarketClock에 전달한다."""
+    from view.web.bootstrap.config_bootstrap import ConfigBootstrap
+
+    special_hours = {"20261119": {"open": "10:00", "close": "16:40"}}
+    patched_bootstrap_deps["load_configs"].return_value["special_market_hours"] = special_hours
+
+    ConfigBootstrap(_make_fake_context()).run()
+
+    assert patched_bootstrap_deps["clock_cls"].call_args.kwargs["special_market_hours"] == special_hours
+
+
 def test_config_bootstrap_creates_notification_alert_killswitch(patched_bootstrap_deps):
     """notification_service, operator_alert_service, kill_switch_service 가 생성된다."""
     from view.web.bootstrap.config_bootstrap import ConfigBootstrap

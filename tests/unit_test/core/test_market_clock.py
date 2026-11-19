@@ -190,6 +190,28 @@ def test_is_market_open_after_close(market_clock):
     assert not market_clock.is_market_operating_hours(now=weekday_after_close)
 
 
+def test_special_market_hours_delay_open_and_extend_close():
+    """날짜별 임시 거래시간은 해당 날짜에만 기본 시간을 대체한다."""
+    clock = MarketClock(
+        special_market_hours={
+            "20261119": {"open": "10:00", "close": "16:40"},
+        }
+    )
+    kst = clock.market_timezone
+
+    delayed_day_before_open = kst.localize(dt.datetime(2026, 11, 19, 9, 7))
+    delayed_day_open = kst.localize(dt.datetime(2026, 11, 19, 10, 0))
+    delayed_day_close = kst.localize(dt.datetime(2026, 11, 19, 16, 40))
+    normal_day_open = kst.localize(dt.datetime(2026, 11, 20, 9, 0))
+
+    assert clock.is_market_operating_hours(delayed_day_before_open) is False
+    assert clock.is_market_operating_hours(delayed_day_open) is True
+    assert clock.is_market_operating_hours(delayed_day_close) is True
+    assert clock.is_market_operating_hours(normal_day_open) is True
+    assert clock.get_market_open_time(delayed_day_open).strftime("%H:%M") == "10:00"
+    assert clock.get_market_close_time(delayed_day_open).strftime("%H:%M") == "16:40"
+
+
 def test_is_nxt_operating_hours_after_krx_close(market_clock):
     """NXT 애프터마켓 시간은 실시간 스트리밍 가능 시간으로 본다."""
     weekday_after_krx_close = market_clock.market_timezone.localize(
