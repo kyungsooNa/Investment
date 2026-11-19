@@ -205,6 +205,36 @@ class TestRunJob:
 
         callback.assert_awaited_once_with("20261119")
 
+    async def test_special_close_preserves_custom_domestic_cron_delay(self):
+        """평소 15:50 태스크는 지연 마감일에 16:50으로 한 시간 이동한다."""
+        clock = MarketClock(
+            special_market_hours={
+                "20261119": {"open": "10:00", "close": "16:40"},
+            }
+        )
+        now = clock.market_timezone.localize(datetime(2026, 11, 19, 15, 50))
+        clock.get_current_kst_time = MagicMock(return_value=now)
+        clock.get_current_kst_date_str = MagicMock(return_value="20261119")
+        callback = AsyncMock()
+        mcs = MagicMock()
+        mcs.get_latest_trading_date = AsyncMock(return_value="20261119")
+        loop = AfterMarketLoop(
+            mcs=mcs,
+            market_clock=clock,
+            logger=MagicMock(),
+            on_market_closed=callback,
+            label="CustomDomesticClose",
+            cron_hour=15,
+            cron_minute=50,
+        )
+        loop._scheduler = MagicMock()
+
+        await loop._run_job()
+
+        callback.assert_not_awaited()
+        run_date = loop._scheduler.add_job.call_args.kwargs["run_date"]
+        assert run_date == clock.market_timezone.localize(datetime(2026, 11, 19, 16, 50))
+
     async def test_uses_clock_date_when_no_mcs(self):
         """mcs 미주입 시 market_clock 의 날짜를 latest_trading_date 로 사용한다.
 
