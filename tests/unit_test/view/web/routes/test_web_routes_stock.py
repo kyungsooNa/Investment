@@ -1158,7 +1158,7 @@ def test_ai_news_review_returns_502_on_ai_failure_or_blank_result(
 
 
 def test_get_premarket_direction_returns_forecast(web_client, mock_web_ctx):
-    """GET /api/market/premarket-direction 은 오늘 코스피 상승 마감 확률을 내려준다."""
+    """GET /api/market/premarket-direction 은 오늘 시가 갭상승 확률을 내려준다."""
     from unittest.mock import AsyncMock
 
     forecast = {"ok": True, "date": "2026-11-19", "probability": 0.72, "outlook": "상승 우세",

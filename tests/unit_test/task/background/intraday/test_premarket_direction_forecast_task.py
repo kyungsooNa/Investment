@@ -1,4 +1,4 @@
-"""장전 코스피 방향 예측 태스크 테스트.
+"""장전 시가 갭 예측 태스크 테스트.
 
 MarketTimingDailyUpdateTask 의 루프(개장 30분 전 창, 하루 1회, 거래일 판정)를 그대로 쓰고
 실행 본문만 `PremarketDirectionService.refresh(notify=True)` 로 바꾼다.
