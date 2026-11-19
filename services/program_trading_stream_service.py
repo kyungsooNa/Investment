@@ -28,6 +28,7 @@ class ProgramTradingStreamService:
     FLUSH_INTERVAL_SEC = 1.0
     FLUSH_BATCH_SIZE = 100
     HOURLY_TICK_ALERT_INTERVAL_SEC = 60 * 60
+    CLOSED_MARKET_RECHECK_INTERVAL_SEC = 60
     REGULAR_SESSION_CLOSE_TIME = "15:30"
     CLOSING_AUCTION_START_TIME = "15:20"
 
@@ -735,11 +736,17 @@ class ProgramTradingStreamService:
     async def _hourly_tick_alert_loop(self) -> None:
         try:
             while True:
-                await asyncio.sleep(self.HOURLY_TICK_ALERT_INTERVAL_SEC)
                 if await self._is_market_open_for_tick_alert():
-                    await self.send_subscribed_last_tick_alert()
+                    sent = await self.send_subscribed_last_tick_alert()
+                    sleep_seconds = (
+                        self.HOURLY_TICK_ALERT_INTERVAL_SEC
+                        if sent
+                        else self.CLOSED_MARKET_RECHECK_INTERVAL_SEC
+                    )
                 else:
                     self.logger.debug("장중이 아니므로 프로그램매매 tick 상태 알림을 생략합니다.")
+                    sleep_seconds = self.CLOSED_MARKET_RECHECK_INTERVAL_SEC
+                await asyncio.sleep(sleep_seconds)
         except asyncio.CancelledError:
             raise
         except Exception as e:
