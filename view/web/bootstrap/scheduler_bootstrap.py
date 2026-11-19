@@ -165,6 +165,7 @@ class SchedulerBootstrap:
         self._register(self._optional_task("market_index_threshold_alert_task"))
         self._register(self._optional_task("index_flow_sampler_task"))
         self._register(self._optional_task("market_timing_daily_update_task"))
+        self._register(self._optional_task("premarket_direction_forecast_task"))
         # 실계좌 포지션을 쥔 매매 런타임의 생존만 외부 감시한다 (always-on, TimeDispatcher 미등록).
         self._register(build_heartbeat_task(ctx))
 

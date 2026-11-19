@@ -29,6 +29,14 @@
 
     <div class="card domestic-theme-card">
         <div class="domestic-theme-card-header">
+            <h3>오늘 코스피 상승 마감 확률</h3>
+            <span class="small">밤사이 미국장·VIX·환율 기준</span>
+        </div>
+        <div id="premarket-direction"><p class="small">불러오는 중...</p></div>
+    </div>
+
+    <div class="card domestic-theme-card">
+        <div class="domestic-theme-card-header">
             <h3>당일 주도 테마</h3>
             <span id="domestic-theme-updated" class="small"></span>
             <a href="/ranking" class="small">전체 보기</a>
@@ -40,6 +48,6 @@
 
 {% block scripts %}
 <script src="/static/js/autocomplete.js?v=2"></script>
-<script src="/static/js/domestic_home.js?v=2"></script>
+<script src="/static/js/domestic_home.js?v=3"></script>
 <script src="/static/js/market_indices.js?v=22"></script>
 {% endblock %}

@@ -1731,3 +1731,19 @@ def test_manual_order_service_does_not_double_write_ledger(patched_service_conta
     _run_with_overseas(ctx)
 
     assert ctx.overseas_manual_order_service._ledger is None
+
+
+def test_premarket_direction_forecast_wired_for_trading_and_service_for_web(patched_service_container_deps):
+    """장전 방향 예측: 서비스는 웹 카드용으로 항상, 알림 태스크는 트레이딩 모드에서만 만든다."""
+    from view.web.bootstrap.service_container import ServiceContainer
+
+    ctx = _make_fake_context()
+    ServiceContainer(ctx).run()
+    assert ctx.premarket_direction_service is not None
+    assert ctx.premarket_direction_forecast_task.task_name == "premarket_direction_forecast"
+
+    web_ctx = _make_fake_context()
+    web_ctx.runtime_mode = RuntimeMode.WEB
+    ServiceContainer(web_ctx).run()
+    assert web_ctx.premarket_direction_service is not None
+    assert web_ctx.premarket_direction_forecast_task is None

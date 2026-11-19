@@ -10,14 +10,16 @@ import json
 import pytest
 
 from scripts.run_premarket_direction_backtest import (
+    bucket_hit_rates,
+    sign_rule_hit_rate,
+    walk_forward_logit,
+)
+from services.premarket_direction_service import (
     FeatureSpec,
     asof_return,
     build_dataset,
-    bucket_hit_rates,
     parse_naver_fchart,
     parse_yahoo_chart,
-    sign_rule_hit_rate,
-    walk_forward_logit,
 )
 
 

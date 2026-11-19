@@ -330,6 +330,24 @@ body {
 
 .domestic-theme-card { margin-top: 16px; }
 
+.premarket-direction-head {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
+.premarket-direction-prob { font-size: 1.6em; font-weight: 700; }
+
+.premarket-direction-features {
+    list-style: none;
+    margin: 8px 0;
+    padding: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 14px;
+}
+
 .domestic-theme-card-header {
     display: flex;
     align-items: baseline;
