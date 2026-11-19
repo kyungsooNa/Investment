@@ -275,11 +275,5 @@ class MarketCalendarService:
                 self._logger.error("최근 15일 내에 영업일이 없습니다. (시스템 오류 의심)")
                 return None
 
-        # 찾아낸 영업일 문자열(latest_close_str)과 MarketClock의 마감 시간(15:40)을 결합
-        close_time_str = self._market_clock.market_close_time_str
-        close_hour, close_minute = map(int, close_time_str.split(":"))
         close_date = datetime.strptime(latest_close_str, "%Y%m%d")
-        
-        return self._market_clock.market_timezone.localize(
-            datetime(close_date.year, close_date.month, close_date.day, close_hour, close_minute)
-        )
+        return self._market_clock.get_market_close_time(close_date)

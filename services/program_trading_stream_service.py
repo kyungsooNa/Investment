@@ -563,20 +563,27 @@ class ProgramTradingStreamService:
         digits = digits[:8]
         day = datetime.strptime(digits, "%Y%m%d")
 
-        open_time = getattr(self._market_clock, "market_open_time_str", "09:00")
-        close_time = getattr(self._market_clock, "market_close_time_str", "15:40")
-        regular_close_time = self.REGULAR_SESSION_CLOSE_TIME
-        if close_time > regular_close_time:
-            close_time = regular_close_time
-        open_hour, open_minute = map(int, open_time.split(":"))
-        close_hour, close_minute = map(int, close_time.split(":"))
-        start_dt = datetime(day.year, day.month, day.day, open_hour, open_minute)
-        end_dt = datetime(day.year, day.month, day.day, close_hour, close_minute)
-
         timezone = getattr(self._market_clock, "market_timezone", None)
-        if timezone is not None:
-            start_dt = timezone.localize(start_dt)
-            end_dt = timezone.localize(end_dt)
+        if self._market_clock is None:
+            open_hour, open_minute = map(int, "09:00".split(":"))
+            close_hour, close_minute = map(int, "15:40".split(":"))
+            start_dt = datetime(day.year, day.month, day.day, open_hour, open_minute)
+            market_close_dt = datetime(day.year, day.month, day.day, close_hour, close_minute)
+        else:
+            start_dt = self._market_clock.get_market_open_time(day)
+            market_close_dt = self._market_clock.get_market_close_time(day)
+
+        base_close_time = getattr(self._market_clock, "market_close_time_str", "15:40")
+        base_close_hour, base_close_minute = map(int, base_close_time.split(":"))
+        regular_close_hour, regular_close_minute = map(
+            int, self.REGULAR_SESSION_CLOSE_TIME.split(":")
+        )
+        close_offset_minutes = max(
+            0,
+            (base_close_hour * 60 + base_close_minute)
+            - (regular_close_hour * 60 + regular_close_minute),
+        )
+        end_dt = market_close_dt - timedelta(minutes=close_offset_minutes)
 
         expected_minutes = []
         cursor = start_dt.replace(second=0, microsecond=0)
