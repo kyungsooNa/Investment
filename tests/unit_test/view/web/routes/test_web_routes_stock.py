@@ -1161,8 +1161,14 @@ def test_get_premarket_direction_returns_forecast(web_client, mock_web_ctx):
     """GET /api/market/premarket-direction 은 오늘 시가 갭상승 확률을 내려준다."""
     from unittest.mock import AsyncMock
 
-    forecast = {"ok": True, "date": "2026-11-19", "probability": 0.72, "outlook": "상승 우세",
-                "base_date": "2026-11-18", "train_days": 1450, "features": []}
+    forecast = {
+        "ok": True, "date": "2026-11-19", "base_date": "2026-11-18",
+        "targets": [
+            {"code": "KOSPI", "name": "코스피", "probability": 0.72, "outlook": "갭상승 우세", "train_days": 1450},
+            {"code": "000660", "name": "SK하이닉스", "probability": 0.31, "outlook": "갭하락 우세", "train_days": 1450},
+        ],
+        "features": [{"name": "spx", "label": "S&P500", "value": 0.012}],
+    }
     mock_web_ctx.premarket_direction_service.get_or_compute = AsyncMock(return_value=forecast)
 
     body = web_client.get("/api/market/premarket-direction").json()
