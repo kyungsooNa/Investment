@@ -3,6 +3,7 @@ from unittest.mock import MagicMock, AsyncMock, patch
 from datetime import datetime, timedelta
 import pytz
 from services.market_calendar_service import MarketCalendarService
+from core.market_clock import MarketClock
 from common.types import ResCommonResponse
 
 @pytest.fixture
@@ -16,15 +17,15 @@ def mock_deps():
     tm.market_close_time_str = "15:40"   # ✅ 이 줄을 반드시 추가해 주세요!
     tm.market_timezone = pytz.timezone("Asia/Seoul")
     
-    def _get_market_open_time():
-        now = tm.get_current_kst_time()
+    def _get_market_open_time(target_dt=None):
+        now = target_dt or tm.get_current_kst_time()
         if now.tzinfo is None:
             now = tm.market_timezone.localize(now)
         return tm.market_timezone.localize(datetime(now.year, now.month, now.day, 9, 0, 0))
     tm.get_market_open_time.side_effect = _get_market_open_time
     
-    def _get_market_close_time():
-        now = tm.get_current_kst_time()
+    def _get_market_close_time(target_dt=None):
+        now = target_dt or tm.get_current_kst_time()
         if now.tzinfo is None:
             now = tm.market_timezone.localize(now)
         return tm.market_timezone.localize(datetime(now.year, now.month, now.day, 15, 30, 0))
@@ -320,6 +321,24 @@ async def test_get_next_open_time_before_today_open(manager, mock_deps):
 
     expected_open_time = tm.market_timezone.localize(datetime(2025, 6, 27, 9, 0, 0))  # 오늘 9시
     assert next_open == expected_open_time
+
+
+@pytest.mark.asyncio
+async def test_get_next_open_time_uses_special_market_open_time():
+    """지연 개장일 장전에는 기본 09:00이 아닌 임시 10:00까지 대기한다."""
+    clock = MarketClock(
+        special_market_hours={
+            "20261119": {"open": "10:00", "close": "16:40"},
+        }
+    )
+    now = clock.market_timezone.localize(datetime(2026, 11, 19, 9, 45))
+    clock.get_current_kst_time = MagicMock(return_value=now)
+    service = MarketCalendarService(clock)
+    service.is_business_day = AsyncMock(return_value=True)
+
+    next_open = await service.get_next_open_time()
+
+    assert next_open == clock.market_timezone.localize(datetime(2026, 11, 19, 10, 0))
 
 @pytest.mark.asyncio
 async def test_get_next_open_time_after_today_open_weekday(manager, mock_deps):

@@ -230,13 +230,8 @@ class MarketCalendarService:
             # 이미 장이 끝났거나 장 중이라면, 혹은 휴일이라면 다음 영업일을 찾음
             next_open_str = await self.get_next_open_day(today_str)
             
-        open_time_str = self._market_clock.market_open_time_str
-        open_hour, open_minute = map(int, open_time_str.split(":"))
         next_open_date = datetime.strptime(next_open_str, "%Y%m%d")
-        
-        return self._market_clock.market_timezone.localize(
-            datetime(next_open_date.year, next_open_date.month, next_open_date.day, open_hour, open_minute)
-        )
+        return self._market_clock.get_market_open_time(next_open_date)
 
     async def wait_until_next_open(self, max_sleep_seconds: Optional[float] = None):
         """다음 개장 시간까지 스케줄러를 비동기적으로 대기시킵니다."""
