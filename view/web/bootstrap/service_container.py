@@ -78,6 +78,7 @@ from task.background.intraday.market_timing_daily_update_task import MarketTimin
 from view.web.bootstrap.runtime_mode import RuntimeMode
 from view.web.bootstrap.backtest_task_bootstrap import BacktestTaskBootstrap
 from view.web.bootstrap.index_flow_bootstrap import build_index_flow
+from view.web.bootstrap.premarket_direction_bootstrap import build_premarket_direction
 from view.web.bootstrap.repository_bootstrap import RepositoryBootstrap
 from view.web.bootstrap.market_data_bootstrap import MarketDataBootstrap
 from view.web.bootstrap.query_bootstrap import QueryBootstrap
@@ -898,6 +899,7 @@ class ServiceContainer:
                 needs_trading
                 and ctx.oneil_universe_service is not None
             ) else None
+            build_premarket_direction(ctx, needs_trading=needs_trading)
 
             OverseasBootstrap(ctx).build_favorite_price_alert(config_dict, needs_web=needs_web)
 

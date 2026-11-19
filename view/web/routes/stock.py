@@ -206,6 +206,26 @@ async def get_market_index_flow(index_code: str):
     return _serialize_response(resp)
 
 
+@router.get("/market/premarket-direction")
+async def get_premarket_direction():
+    """오늘 코스피 상승 마감(종가>전일종가) 확률. 장전 태스크 결과가 없으면 즉석 계산한다.
+
+    정보 표시 전용이며 매매 판단에 연결되지 않는다.
+    """
+    ctx = _get_ctx()
+    service = getattr(ctx, "premarket_direction_service", None)
+    if service is None:
+        return {"rt_cd": "1", "msg1": "장전 방향 예측 서비스가 비활성화되어 있습니다.", "data": None}
+    try:
+        result = await asyncio.wait_for(service.get_or_compute(), timeout=30.0)
+    except asyncio.TimeoutError:
+        ctx.logger.warning("[stock] 장전 방향 예측 타임아웃 (30s 초과)")
+        return {"rt_cd": "1", "msg1": "장전 방향 예측 계산 시간이 초과되었습니다.", "data": None}
+    if not result.get("ok"):
+        return {"rt_cd": "1", "msg1": f"장전 방향 예측 실패: {result.get('error')}", "data": None}
+    return {"rt_cd": "0", "msg1": "장전 방향 예측 조회 성공", "data": result}
+
+
 @router.get("/market-index/{index_code}/flow/history")
 async def get_market_index_flow_history(index_code: str):
     """코스피(0001)/코스닥(1001)의 장중 투자자 누적 순매수(억원) 시간별 표본. 수급 시간차트용."""

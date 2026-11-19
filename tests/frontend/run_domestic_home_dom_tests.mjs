@@ -40,13 +40,31 @@ const THEME_REPORT = {
   ],
 };
 
-async function makeWindow({ themeReport = THEME_REPORT } = {}) {
+const PREMARKET_REPORT = {
+  rt_cd: "0",
+  msg1: "장전 방향 예측 조회 성공",
+  data: {
+    ok: true,
+    date: "2026-11-19",
+    base_date: "2026-11-18",
+    probability: 0.723,
+    outlook: "상승 우세",
+    train_days: 1450,
+    features: [
+      { name: "spx", label: "S&P500", value: 0.0123, contribution: 0.4 },
+      { name: "vix", label: "VIX 변화율", value: -0.051, contribution: 0.2 },
+    ],
+  },
+};
+
+async function makeWindow({ themeReport = THEME_REPORT, premarketReport = PREMARKET_REPORT } = {}) {
   const dom = new JSDOM(`<!DOCTYPE html><html><body>
     <form id="search-form" onsubmit="return submitDomesticStockSearch(event)">
       <input id="domestic-stock-search" type="search">
       <ul id="domestic-stock-autocomplete"></ul>
       <p id="domestic-stock-search-error"></p>
     </form>
+    <div id="premarket-direction"></div>
     <div id="domestic-theme-leaders"></div>
     <span id="domestic-theme-updated"></span>
   </body></html>`, {
@@ -60,6 +78,9 @@ async function makeWindow({ themeReport = THEME_REPORT } = {}) {
     window.__fetched.push(String(url));
     if (String(url).startsWith("/api/ranking/themes/intraday")) {
       return { json: async () => themeReport };
+    }
+    if (String(url).startsWith("/api/market/premarket-direction")) {
+      return { json: async () => premarketReport };
     }
     return { json: async () => ({
       stocks: [
@@ -146,6 +167,28 @@ test("주도 테마 데이터가 없으면 안내 문구 표시", async () => {
   const box = window.document.getElementById("domestic-theme-leaders");
   assert(box.querySelectorAll(".domestic-theme-item").length === 0, "빈 데이터인데 항목 표시");
   assert(box.textContent.includes("수집 중"), "빈 데이터 안내 누락");
+});
+
+test("장전 코스피 상승 마감 확률과 밤사이 지표를 표시", async () => {
+  const window = await makeWindow();
+  const box = window.document.getElementById("premarket-direction");
+  assert(window.__fetched.includes("/api/market/premarket-direction"), "장전 예측 API 미호출");
+  assert(box.textContent.includes("72%"), "확률 누락");
+  assert(box.textContent.includes("상승 우세"), "판정 누락");
+  assert(box.querySelector(".premarket-direction-prob.text-red") !== null, "상승 우세 색상 누락");
+  assert(box.textContent.includes("S&P500") && box.textContent.includes("+1.23%"), "지표 등락 누락");
+  assert(box.textContent.includes("-5.10%"), "음수 지표 누락");
+  assert(box.textContent.includes("2026-11-18"), "기준일 누락");
+  assert(box.textContent.includes("매매 신호 아님"), "참고용 안내 누락");
+});
+
+test("장전 예측 실패 시 사유를 표시", async () => {
+  const window = await makeWindow({
+    premarketReport: { rt_cd: "1", msg1: "장전 방향 예측 실패: 시세 수신 실패: vix", data: null },
+  });
+  const box = window.document.getElementById("premarket-direction");
+  assert(box.textContent.includes("시세 수신 실패"), "실패 사유 누락");
+  assert(box.querySelector(".premarket-direction-prob") === null, "실패인데 확률 표시");
 });
 
 await run();

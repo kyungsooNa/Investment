@@ -134,7 +134,47 @@ async function loadDomesticThemeLeaders() {
     }
 }
 
+function _formatSignedPct(ratio) {
+    const pct = Number(ratio || 0) * 100;
+    return `${pct > 0 ? '+' : ''}${pct.toFixed(2)}%`;
+}
+
+function _renderPremarketDirection(box, data) {
+    const prob = Number(data.probability || 0);
+    const probClass = prob >= 0.6 ? 'text-red' : (prob <= 0.4 ? 'text-blue' : '');
+    const features = (data.features || []).map(feature => {
+        const value = Number(feature.value || 0);
+        const cls = value > 0 ? 'text-red' : (value < 0 ? 'text-blue' : '');
+        return `<li>${escapeHtml(feature.label || feature.name || '')} <span class="${cls}">${_formatSignedPct(value)}</span></li>`;
+    }).join('');
+    box.innerHTML = `
+        <div class="premarket-direction-head">
+            <span class="premarket-direction-prob ${probClass}">${Math.round(prob * 100)}%</span>
+            <strong>${escapeHtml(data.outlook || '')}</strong>
+            <span class="small">${escapeHtml(data.base_date || '')} 종가 대비 · 학습 ${Number(data.train_days || 0).toLocaleString()}일</span>
+        </div>
+        <ul class="premarket-direction-features">${features}</ul>
+        <p class="small">참고 정보 — 백테스트 표본외 정확도 약 65%, 매매 신호 아님</p>`;
+}
+
+async function loadPremarketDirection() {
+    const box = document.getElementById('premarket-direction');
+    if (!box) return;
+    try {
+        const response = await fetch('/api/market/premarket-direction');
+        const json = await response.json();
+        if (json.rt_cd === '0' && json.data) {
+            _renderPremarketDirection(box, json.data);
+        } else {
+            box.innerHTML = `<p class="small">${escapeHtml(json.msg1 || '장전 예측을 불러오지 못했습니다.')}</p>`;
+        }
+    } catch (_) {
+        box.innerHTML = '<p class="small">장전 예측을 불러오지 못했습니다.</p>';
+    }
+}
+
 function initDomesticHome() {
+    void loadPremarketDirection();
     void loadDomesticThemeLeaders();
     const input = document.getElementById('domestic-stock-search');
     if (!input || input.dataset.autocompleteReady === 'true') return;

@@ -1155,3 +1155,39 @@ def test_ai_news_review_returns_502_on_ai_failure_or_blank_result(
 
     _setup_news_ctx(mock_web_ctx, analysis="")
     assert web_client.post("/api/stock/005930/ai-news").status_code == 502
+
+
+def test_get_premarket_direction_returns_forecast(web_client, mock_web_ctx):
+    """GET /api/market/premarket-direction 은 오늘 코스피 상승 마감 확률을 내려준다."""
+    from unittest.mock import AsyncMock
+
+    forecast = {"ok": True, "date": "2026-11-19", "probability": 0.72, "outlook": "상승 우세",
+                "base_date": "2026-11-18", "train_days": 1450, "features": []}
+    mock_web_ctx.premarket_direction_service.get_or_compute = AsyncMock(return_value=forecast)
+
+    body = web_client.get("/api/market/premarket-direction").json()
+
+    assert body == {"rt_cd": "0", "msg1": "장전 방향 예측 조회 성공", "data": forecast}
+
+
+def test_get_premarket_direction_reports_failure(web_client, mock_web_ctx):
+    from unittest.mock import AsyncMock
+
+    mock_web_ctx.premarket_direction_service.get_or_compute = AsyncMock(
+        return_value={"ok": False, "date": "2026-11-19", "error": "시세 수신 실패: vix"}
+    )
+
+    body = web_client.get("/api/market/premarket-direction").json()
+
+    assert body["rt_cd"] == "1"
+    assert "vix" in body["msg1"]
+    assert body["data"] is None
+
+
+def test_get_premarket_direction_without_service(web_client, mock_web_ctx):
+    mock_web_ctx.premarket_direction_service = None
+
+    body = web_client.get("/api/market/premarket-direction").json()
+
+    assert body["rt_cd"] == "1"
+    assert body["data"] is None

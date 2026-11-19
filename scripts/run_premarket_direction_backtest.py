@@ -22,90 +22,22 @@ from __future__ import annotations
 import argparse
 import json
 import math
-import re
-from bisect import bisect_left
-from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Sequence
+
+from services.premarket_direction_service import (
+    GAP,
+    KR_PREV,
+    US_FEATURES,
+    FeatureSpec,
+    _fit_logit,
+    build_dataset,
+    parse_naver_fchart,
+    parse_yahoo_chart,
+)
 
 LABELS = (("up_close", "B 종가>전일종가"), ("up_body", "C 종가>시가"), ("up_gap", "A 시가>전일종가"))
 KR_INDICES = (("KOSPI", "코스피"), ("KOSDAQ", "코스닥"))
-
-
-@dataclass(frozen=True)
-class FeatureSpec:
-    name: str
-    label: str
-    sign: int  # +1: 상승이 호재, -1: 상승이 악재
-    symbol: str = ""
-
-
-US_FEATURES: tuple[FeatureSpec, ...] = (
-    FeatureSpec("sox", "필라델피아 반도체(SOX)", +1, "^SOX"),
-    FeatureSpec("ndx", "나스닥100", +1, "^NDX"),
-    FeatureSpec("spx", "S&P500", +1, "^GSPC"),
-    FeatureSpec("ewy", "EWY(미국상장 한국ETF)", +1, "EWY"),
-    FeatureSpec("vix", "VIX 변화율", -1, "^VIX"),
-    FeatureSpec("usdkrw", "원/달러 환율 변화율", -1, "KRW=X"),
-    FeatureSpec("tnx", "미국 10년물 금리 변화율", -1, "^TNX"),
-)
-KR_PREV = FeatureSpec("kr_prev_ret", "전일 지수 등락(모멘텀)", +1)
-GAP = FeatureSpec("gap", "시가 갭(역추세, 시가 확정 후)", -1)
 MODEL_FEATURES = [f.name for f in US_FEATURES] + [KR_PREV.name]
-
-
-# ── 파서 ─────────────────────────────────────────────────────────────
-
-def parse_naver_fchart(text: str) -> List[dict]:
-    rows = []
-    for data in re.findall(r'data="([^"]+)"', text):
-        d, o, h, l, c, *_ = data.split("|")
-        rows.append({
-            "date": f"{d[:4]}-{d[4:6]}-{d[6:8]}",
-            "open": float(o), "high": float(h), "low": float(l), "close": float(c),
-        })
-    rows.sort(key=lambda r: r["date"])
-    return rows
-
-
-def parse_yahoo_chart(text: str) -> List[dict]:
-    result = json.loads(text)["chart"]["result"][0]
-    tz = timezone(timedelta(seconds=result["meta"].get("gmtoffset", 0)))
-    closes = result["indicators"]["quote"][0]["close"]
-    rows = {}
-    for ts, c in zip(result.get("timestamp") or [], closes):
-        if c is None:
-            continue
-        rows[datetime.fromtimestamp(ts, tz).strftime("%Y-%m-%d")] = float(c)
-    return [{"date": d, "close": rows[d]} for d in sorted(rows)]
-
-
-# ── 데이터셋 ─────────────────────────────────────────────────────────
-
-def asof_return(series: Sequence[dict], prev_date: str, date: str) -> Optional[float]:
-    """date 미만 마지막 종가 / prev_date 미만 마지막 종가 - 1."""
-    dates = [r["date"] for r in series]
-    base_idx = bisect_left(dates, prev_date) - 1
-    now_idx = bisect_left(dates, date) - 1
-    if base_idx < 0 or now_idx < 0:
-        return None
-    return series[now_idx]["close"] / series[base_idx]["close"] - 1.0
-
-
-def build_dataset(kr_rows: Sequence[dict], us: Dict[str, Sequence[dict]]) -> List[dict]:
-    rows = []
-    for i in range(1, len(kr_rows)):
-        prev, cur = kr_rows[i - 1], kr_rows[i]
-        row = {"date": cur["date"]}
-        for name, series in us.items():
-            row[name] = asof_return(series, prev["date"], cur["date"])
-        row[KR_PREV.name] = prev["close"] / kr_rows[i - 2]["close"] - 1.0 if i >= 2 else None
-        row[GAP.name] = cur["open"] / prev["close"] - 1.0
-        row["up_close"] = int(cur["close"] > prev["close"])
-        row["up_body"] = int(cur["close"] > cur["open"])
-        row["up_gap"] = int(cur["open"] > prev["close"])
-        rows.append(row)
-    return rows
 
 
 # ── 평가 ─────────────────────────────────────────────────────────────
@@ -129,24 +61,6 @@ def bucket_hit_rates(rows, spec: FeatureSpec, label: str, thresholds=(0.0, 0.01,
         hits = [pred == bool(r[label]) for pred, r in _signal_rows(rows, spec, t)]
         out.append({"min_abs": t, "n": len(hits), "hit_rate": sum(hits) / len(hits) if hits else float("nan")})
     return out
-
-
-def _fit_logit(X: List[List[float]], y: List[int], iters: int = 400, lr: float = 0.5, l2: float = 1e-2):
-    import numpy as np
-
-    X = np.asarray(X, dtype=float)
-    y = np.asarray(y, dtype=float)
-    mu, sd = X.mean(axis=0), X.std(axis=0)
-    sd[sd == 0] = 1.0
-    Z = (X - mu) / sd
-    w = np.zeros(Z.shape[1])
-    b = 0.0
-    for _ in range(iters):
-        p = 1.0 / (1.0 + np.exp(-(Z @ w + b)))
-        g = p - y
-        w -= lr * (Z.T @ g / len(y) + l2 * w)
-        b -= lr * g.mean()
-    return mu, sd, w, b
 
 
 def walk_forward_logit(rows, features: List[str], label: str, min_train: int = 250,
