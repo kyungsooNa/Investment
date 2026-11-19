@@ -139,6 +139,18 @@ function _formatSignedPct(ratio) {
     return `${pct > 0 ? '+' : ''}${pct.toFixed(2)}%`;
 }
 
+function _premarketTrackText(target) {
+    const track = target.track || {};
+    if (!track.n) return '적중률 기록 쌓는 중';
+    const parts = [`최근 ${track.n}일 ${track.hits}/${track.n}`];
+    const prev = target.previous;
+    if (prev && prev.actual_gap !== null && prev.actual_gap !== undefined) {
+        const hit = (Number(prev.probability) > 0.5) === (Number(prev.actual_gap) > 0);
+        parts.push(`전일 ${Math.round(Number(prev.probability) * 100)}% → ${_formatSignedPct(prev.actual_gap)} ${hit ? '적중' : '실패'}`);
+    }
+    return parts.join(' · ');
+}
+
 function _renderPremarketDirection(box, data) {
     const targets = (data.targets || []).map(target => {
         const prob = Number(target.probability || 0);
@@ -147,6 +159,7 @@ function _renderPremarketDirection(box, data) {
             <span class="premarket-direction-name">${escapeHtml(target.name || target.code || '')}</span>
             <span class="premarket-direction-prob ${probClass}">${Math.round(prob * 100)}%</span>
             <strong>${escapeHtml(target.outlook || '')}</strong>
+            <span class="small">${_premarketTrackText(target)}</span>
         </div>`;
     }).join('');
     const features = (data.features || []).map(feature => {

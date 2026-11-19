@@ -23,7 +23,8 @@ import re
 from bisect import bisect_left
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Dict, List, Optional, Sequence
+from pathlib import Path
+from typing import Dict, List, Optional, Sequence, Union
 
 import httpx
 
@@ -155,6 +156,33 @@ def build_forecast_features(us: Dict[str, Sequence[dict]], prev_date: str, date:
     return {name: asof_return(series, prev_date, date) for name, series in us.items()}
 
 
+TRACK_WINDOW = 20
+
+
+def actual_gaps(rows: Sequence[dict]) -> Dict[str, float]:
+    """일봉 → {날짜: 시가/전일종가-1}. 오늘 행이 있으면(장 시작 후) 오늘 갭도 포함된다."""
+    return {rows[i]["date"]: rows[i]["open"] / rows[i - 1]["close"] - 1.0 for i in range(1, len(rows))}
+
+
+def _is_hit(probability: float, actual_gap: float) -> bool:
+    return (probability > 0.5) == (actual_gap > 0)
+
+
+def summarize_track(history: Dict[str, dict], code: str, window: int = TRACK_WINDOW) -> Dict[str, int]:
+    """실제 갭이 확정된 최근 window 일의 적중 수 (확신 = 확률 ≥UP 또는 ≤DOWN 인 날)."""
+    records = [
+        history[d][code] for d in sorted(history, reverse=True)
+        if code in history[d] and history[d][code].get("actual_gap") is not None
+    ][:window]
+    confident = [r for r in records if r["probability"] >= UP_THRESHOLD or r["probability"] <= DOWN_THRESHOLD]
+    return {
+        "n": len(records),
+        "hits": sum(_is_hit(r["probability"], r["actual_gap"]) for r in records),
+        "confident_n": len(confident),
+        "confident_hits": sum(_is_hit(r["probability"], r["actual_gap"]) for r in confident),
+    }
+
+
 def _outlook(probability: float) -> str:
     if probability >= UP_THRESHOLD:
         return "갭상승 우세"
@@ -205,6 +233,7 @@ class PremarketDirectionService:
         logger: Optional[logging.Logger] = None,
         history_count: int = 1500,
         min_train_days: int = 250,
+        history_path: Union[str, Path, None] = None,
     ):
         self._fetcher = fetcher
         self._clock = market_clock
@@ -212,6 +241,8 @@ class PremarketDirectionService:
         self._logger = logger or logging.getLogger(__name__)
         self._history_count = history_count
         self._min_train_days = min_train_days
+        # None 이면 적중 기록을 남기지 않는다(테스트·스크립트용). 운영 조립은 경로를 넘긴다.
+        self._history_path = Path(history_path) if history_path is not None else None
         self._latest: Optional[dict] = None
 
     def get_latest(self) -> Optional[dict]:
@@ -244,17 +275,19 @@ class PremarketDirectionService:
         if empty:
             raise ValueError(f"시세 수신 실패: {', '.join(empty)}")
 
-        targets, feats, base_date = [], {}, None
+        targets, feats, base_date, gaps = [], {}, None, {}
         for target in TARGETS:
-            kr = [r for r in await self._fetcher.fetch_kr_index(target.code, self._history_count)
-                  if r["date"] < today]
+            rows = await self._fetcher.fetch_kr_index(target.code, self._history_count)
+            kr = [r for r in rows if r["date"] < today]
             if not kr:
                 raise ValueError(f"시세 수신 실패: {target.code}")
             names = [f.name for f in target.features]
             prediction, target_feats = self._predict(kr, {n: us[n] for n in names}, names, today)
             targets.append({"code": target.code, "name": target.name, **prediction})
             feats.update(target_feats)
+            gaps[target.code] = actual_gaps(rows)
             base_date = base_date or kr[-1]["date"]
+        self._track(today, targets, gaps)
         return {
             "ok": True,
             "date": today,
@@ -262,6 +295,46 @@ class PremarketDirectionService:
             "targets": targets,
             "features": [{"name": f.name, "label": f.label, "value": feats[f.name]} for f in specs],
         }
+
+    def _track(self, today: str, targets: List[dict], gaps: Dict[str, Dict[str, float]]) -> None:
+        """오늘 예측을 기록하고 지난 예측의 실제 갭을 채운 뒤, 대상별 적중 요약을 붙인다."""
+        history = self._load_history()
+        for date, record in history.items():
+            for code, entry in record.items():
+                if entry.get("actual_gap") is None and date in gaps.get(code, {}):
+                    entry["actual_gap"] = gaps[code][date]
+        today_record = history.setdefault(today, {})
+        for t in targets:
+            entry = today_record.setdefault(t["code"], {"actual_gap": None})
+            entry["probability"] = t["probability"]
+            if entry.get("actual_gap") is None:
+                entry["actual_gap"] = gaps.get(t["code"], {}).get(today)
+        self._save_history(history)
+
+        for t in targets:
+            t["track"] = summarize_track(history, t["code"])
+            past = [d for d in sorted(history, reverse=True)
+                    if d < today and history[d].get(t["code"], {}).get("actual_gap") is not None]
+            t["previous"] = {"date": past[0], **history[past[0]][t["code"]]} if past else None
+
+    def _load_history(self) -> Dict[str, dict]:
+        if self._history_path is None or not self._history_path.exists():
+            return {}
+        try:
+            data = json.loads(self._history_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            self._logger.warning("장전 갭 예측 기록 로드 실패 (%s): %s", self._history_path, exc)
+            return {}
+        return data if isinstance(data, dict) else {}
+
+    def _save_history(self, history: Dict[str, dict]) -> None:
+        if self._history_path is None:
+            return
+        try:
+            self._history_path.parent.mkdir(parents=True, exist_ok=True)
+            self._history_path.write_text(json.dumps(history, ensure_ascii=False, indent=1), encoding="utf-8")
+        except OSError as exc:
+            self._logger.warning("장전 갭 예측 기록 저장 실패 (%s): %s", self._history_path, exc)
 
     def _predict(self, kr: List[dict], us: Dict[str, List[dict]], names: List[str], today: str):
         train = [r for r in build_dataset(kr, us) if all(r.get(n) is not None for n in names)]
@@ -284,18 +357,32 @@ class PremarketDirectionService:
             for t in result["targets"]
         ]
         moves = " · ".join(f"{f['label']} {f['value'] * 100:+.2f}%" for f in result["features"])
-        message = (
-            "\n".join(lines) + "\n"
-            f"• 기준: {result['base_date']} 종가 대비\n"
-            f"• 밤사이: {moves}\n"
-            "※ 시가 갭 방향만 예측(백테스트 적중 약 75%) — 장 시작 후 매매 근거 아님"
-        )
+        lines += [f"• 기준: {result['base_date']} 종가 대비", f"• 밤사이: {moves}"]
+        previous = [t for t in result["targets"] if t.get("previous")]
+        if previous:
+            prev_date = previous[0]["previous"]["date"]
+            lines.append(f"• 전 거래일({prev_date}): " + " · ".join(
+                f"{t['name']} {t['previous']['probability'] * 100:.0f}% → 실제 "
+                f"{t['previous']['actual_gap'] * 100:+.2f}% "
+                f"{'적중' if _is_hit(t['previous']['probability'], t['previous']['actual_gap']) else '실패'}"
+                for t in previous
+            ))
+        tracked = [t for t in result["targets"] if t.get("track", {}).get("n")]
+        if tracked:
+            lines.append(f"• 최근 {TRACK_WINDOW}일 적중: " + " · ".join(
+                f"{t['name']} {t['track']['hits']}/{t['track']['n']} "
+                f"(확신 {t['track']['confident_hits']}/{t['track']['confident_n']})"
+                for t in tracked
+            ))
+        message = "\n".join(lines) + "\n※ 시가 갭 방향만 예측(백테스트 적중 약 75%) — 장 시작 후 매매 근거 아님"
         await self._notification_service.emit(
             category=NotificationCategory.STRATEGY,
             level=NotificationLevel.INFO,
             title="장전 시가 갭 예측",
             message=message,
             metadata={
+                # 기본 route_levels 는 STRATEGY/info 를 외부로 보내지 않는다 — 마켓타이밍 알림처럼 강제 전송.
+                "force_external": True,
                 "event": "premarket_direction_forecast",
                 "targets": {t["code"]: round(t["probability"], 4) for t in result["targets"]},
             },

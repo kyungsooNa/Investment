@@ -9,6 +9,7 @@ def build_premarket_direction(ctx, *, needs_trading: bool) -> None:
     # 웹 카드가 서비스를 직접 조회하므로 서비스는 항상 두고, 장전 알림 태스크만 매매 모드에 묶는다.
     ctx.premarket_direction_service = PremarketDirectionService(
         fetcher=DailyHistoryFetcher(),
+        history_path="data/premarket_direction/history.json",
         market_clock=ctx.market_clock,
         notification_service=ctx.notification_service,
         logger=ctx.logger,

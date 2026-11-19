@@ -48,8 +48,11 @@ const PREMARKET_REPORT = {
     date: "2026-11-19",
     base_date: "2026-11-18",
     targets: [
-      { code: "KOSPI", name: "코스피", probability: 0.723, outlook: "갭상승 우세", train_days: 1450 },
-      { code: "000660", name: "SK하이닉스", probability: 0.31, outlook: "갭하락 우세", train_days: 1450 },
+      { code: "KOSPI", name: "코스피", probability: 0.723, outlook: "갭상승 우세", train_days: 1450,
+        track: { n: 20, hits: 15, confident_n: 12, confident_hits: 10 },
+        previous: { date: "2026-11-18", probability: 0.65, actual_gap: 0.0045 } },
+      { code: "000660", name: "SK하이닉스", probability: 0.31, outlook: "갭하락 우세", train_days: 1450,
+        track: { n: 0, hits: 0, confident_n: 0, confident_hits: 0 }, previous: null },
     ],
     features: [
       { name: "spx", label: "S&P500", value: 0.0123, contribution: 0.4 },
@@ -181,6 +184,9 @@ test("장전 시가 갭상승 확률을 대상별로, 밤사이 지표와 함께
   assert(rows[0].querySelector(".premarket-direction-prob.text-red") !== null, "갭상승 우세 색상 누락");
   assert(rows[1].textContent.includes("SK하이닉스") && rows[1].textContent.includes("31%"), "하이닉스 확률 누락");
   assert(rows[1].querySelector(".premarket-direction-prob.text-blue") !== null, "갭하락 우세 색상 누락");
+  assert(rows[0].textContent.includes("최근 20일 15/20"), "적중률 누락");
+  assert(rows[0].textContent.includes("전일 65% → +0.45% 적중"), "전 거래일 결과 누락");
+  assert(rows[1].textContent.includes("기록 쌓는 중"), "기록 없음 안내 누락");
   assert(box.textContent.includes("S&P500") && box.textContent.includes("+1.23%"), "지표 등락 누락");
   assert(box.textContent.includes("-5.10%"), "음수 지표 누락");
   assert(box.textContent.includes("2026-11-18"), "기준일 누락");
