@@ -181,8 +181,9 @@ def describe(probability: float) -> str:
     return f"▼ 하락 마감 {(1 - probability) * 100:.0f}%"
 
 
-def summarize_track(history: Dict[str, dict], code: str, window: int = TRACK_WINDOW) -> Dict[str, int]:
-    """실제 종가가 확정된 최근 window 일의 적중 수 (확신 = 확률 ≥UP 또는 ≤DOWN 인 날)."""
+def summarize_track(history: Dict[str, dict], code: str,
+                    window: Optional[int] = TRACK_WINDOW) -> Dict[str, int]:
+    """실제 종가가 확정된 최근 window 일(None 이면 전체)의 적중 수 (확신 = 확률 ≥UP 또는 ≤DOWN 인 날)."""
     records = [
         history[d][code] for d in sorted(history, reverse=True)
         if code in history[d] and history[d][code].get("actual_change") is not None
@@ -194,6 +195,11 @@ def summarize_track(history: Dict[str, dict], code: str, window: int = TRACK_WIN
         "confident_n": len(confident),
         "confident_hits": sum(_is_hit(r["probability"], r["actual_change"]) for r in confident),
     }
+
+
+def _describe_error(exc: Exception) -> str:
+    """httpx.ReadTimeout 처럼 메시지가 빈 예외는 타입 이름이라도 남긴다."""
+    return str(exc) or type(exc).__name__
 
 
 def _outlook(probability: float) -> str:
@@ -274,8 +280,8 @@ class PremarketDirectionService:
         try:
             result = await self._compute(today)
         except Exception as exc:
-            self._logger.warning("장전 종가 방향 예측 실패: %s", exc)
-            result = {"ok": False, "date": today, "error": str(exc)}
+            result = {"ok": False, "date": today, "error": _describe_error(exc)}
+            self._logger.warning("장전 종가 방향 예측 실패: %s", result["error"])
         self._latest = result
         if notify and result["ok"] and self._notification_service is not None:
             await self._notify(result)
@@ -360,6 +366,72 @@ class PremarketDirectionService:
         probability = 1.0 / (1.0 + math.exp(-(sum(w[i] * z[i] for i in range(len(names))) + b)))
         prediction = {"probability": probability, "outlook": _outlook(probability), "train_days": len(train)}
         return prediction, feats
+
+    async def report_close(self, date: str, notify: bool = True) -> dict:
+        """장 마감 후: date 의 예측을 확정 종가로 채점하고 결과·누적 성적을 알린다."""
+        try:
+            result = await self._score_close(date)
+        except Exception as exc:
+            error = _describe_error(exc)
+            self._logger.warning("장마감 종가 예측 채점 실패 (%s): %s", date, error)
+            return {"ok": False, "date": date, "error": error}
+        if notify and result.get("targets") and self._notification_service is not None:
+            await self._notify_result(result)
+        return result
+
+    async def _score_close(self, date: str) -> dict:
+        history = self._load_history()
+        record = history.get(date)
+        if not record:
+            return {"ok": True, "date": date, "skipped": "no_prediction"}
+        # 장 마감 후라 date 당일 종가도 확정값이다 — 다음 날 미만까지 채운다.
+        until = (datetime.strptime(date, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
+        names = {t.code: t.name for t in TARGETS}
+        pending = []
+        for code, entry in record.items():
+            rows = await self._fetcher.fetch_kr_index(code, 30)
+            actual = actual_changes(rows, before=until)
+            for d, rec in history.items():
+                if code in rec and rec[code].get("actual_change") is None and d in actual:
+                    rec[code]["actual_change"] = actual[d]
+            if entry.get("actual_change") is None:
+                pending.append(code)
+        self._save_history(history)
+        if pending:
+            raise ValueError(f"확정 종가 미수신: {', '.join(pending)}")
+        targets = [
+            {"code": code, "name": names.get(code, code), "probability": entry["probability"],
+             "actual_change": entry["actual_change"], "hit": _is_hit(entry["probability"], entry["actual_change"]),
+             "track": summarize_track(history, code), "total": summarize_track(history, code, window=None)}
+            for code, entry in record.items()
+        ]
+        return {"ok": True, "date": date, "targets": targets}
+
+    async def _notify_result(self, result: dict) -> None:
+        def rate(t):
+            return f"{t['hits']}/{t['n']}({t['hits'] / t['n'] * 100:.0f}%)" if t["n"] else "0/0"
+
+        lines = [
+            f"• {t['name']} {describe(t['probability'])} → 실제 {t['actual_change'] * 100:+.2f}% "
+            f"{'적중' if t['hit'] else '실패'}"
+            for t in result["targets"]
+        ]
+        lines.append("• 누적: " + " · ".join(
+            f"{t['name']} 전체 {rate(t['total'])}, 최근 {TRACK_WINDOW}일 {rate(t['track'])}"
+            for t in result["targets"]
+        ))
+        hits = sum(t["hit"] for t in result["targets"])
+        await self._notification_service.emit(
+            category=NotificationCategory.STRATEGY,
+            level=NotificationLevel.INFO,
+            title=f"장마감 종가 예측 결과 ({result['date']}) — {hits}/{len(result['targets'])} 적중",
+            message="\n".join(lines),
+            metadata={
+                "force_external": True,
+                "event": "premarket_direction_result",
+                "hits": {t["code"]: t["hit"] for t in result["targets"]},
+            },
+        )
 
     async def _notify(self, result: dict) -> None:
         lines = [

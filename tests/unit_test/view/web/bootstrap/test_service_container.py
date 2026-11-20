@@ -1749,3 +1749,5 @@ def test_premarket_direction_forecast_wired_for_trading_and_service_for_web(patc
     ServiceContainer(web_ctx).run()
     assert web_ctx.premarket_direction_service is not None
     assert web_ctx.premarket_direction_forecast_task is None
+    assert web_ctx.premarket_direction_result_task is None   # 장마감 채점은 배치 모드 전용
+    assert ctx.premarket_direction_result_task.task_name == "premarket_direction_result"

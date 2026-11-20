@@ -899,7 +899,7 @@ class ServiceContainer:
                 needs_trading
                 and ctx.oneil_universe_service is not None
             ) else None
-            build_premarket_direction(ctx, needs_trading=needs_trading)
+            build_premarket_direction(ctx, needs_trading=needs_trading, needs_batch=needs_batch)
 
             OverseasBootstrap(ctx).build_favorite_price_alert(config_dict, needs_web=needs_web)
 

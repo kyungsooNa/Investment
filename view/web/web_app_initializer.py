@@ -177,6 +177,7 @@ class WebAppContext:
         self.theme_intraday_leader_alert_task = None
         self.premarket_direction_service = None
         self.premarket_direction_forecast_task = None
+        self.premarket_direction_result_task = None
         self.intraday_volume_surge_alert_task = None
         self.strategy_log_report_task: StrategyLogReportTask = None
         self.post_market_replay_audit_task: PostMarketReplayAuditTask = None
