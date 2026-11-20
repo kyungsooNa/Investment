@@ -43,7 +43,8 @@ def _load_metadata():
         return json.load(f)
 
 
-def _needs_update(max_age_days=7):
+def _needs_update(max_age_days=0):
+    # 신규 상장 심볼이 다음 날 바로 검색되도록 하루 한 번 갱신한다 (당일 갱신분만 재사용).
     metadata = _load_metadata()
     if not metadata:
         return True
@@ -57,7 +58,7 @@ def save_overseas_stock_code_list(force_update=False):
     force_update=True일 경우 날짜와 무관하게 업데이트.
     """
     if not force_update and not _needs_update():
-        logger.info("✅ 해외 종목: 최근 7일 이내에 이미 업데이트됨. 업데이트 생략.")
+        logger.info("✅ 해외 종목: 오늘 이미 업데이트됨. 업데이트 생략.")
         return False
 
     temp_db_path = None

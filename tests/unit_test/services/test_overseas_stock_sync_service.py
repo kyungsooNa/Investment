@@ -104,10 +104,18 @@ def test_needs_update_logic():
         json.dump({"last_updated": old_date}, f)
     assert svc._needs_update() is True
 
-    recent_date = (datetime.today() - timedelta(days=1)).strftime("%Y-%m-%d")
+    today = datetime.today().strftime("%Y-%m-%d")
     with open(svc.METADATA_PATH, "w", encoding="utf-8") as f:
-        json.dump({"last_updated": recent_date}, f)
+        json.dump({"last_updated": today}, f)
     assert svc._needs_update() is False
+
+
+def test_needs_update_daily_so_new_listings_appear_next_day():
+    """신규 상장 심볼이 다음 날 검색되도록 해외 목록은 하루 지나면 갱신 대상이다."""
+    yesterday = (datetime.today() - timedelta(days=1)).strftime("%Y-%m-%d")
+    with open(svc.METADATA_PATH, "w", encoding="utf-8") as f:
+        json.dump({"last_updated": yesterday}, f)
+    assert svc._needs_update() is True
 
 
 def test_needs_update_when_metadata_missing():

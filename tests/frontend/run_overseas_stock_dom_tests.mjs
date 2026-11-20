@@ -153,6 +153,29 @@ test("종목명을 직접 검색하면 심볼과 거래소를 해석해 현재�
     "종목명 검색 후 현재가 정보가 표시되지 않음");
 });
 
+test("목록에 없는 신규 상장 심볼은 종목명 부분일치가 여러 개여도 심볼로 직접 조회한다", async () => {
+  const window = makeWindow();
+  // 'ANT' 는 아직 목록에 없고, 이름에 'ant' 가 들어간 종목만 여러 개 있다.
+  window.ALL_OVERSEAS_STOCKS = [
+    { s: "PNTM", n: "Pantheon Resources", e: "NASD" },
+    { s: "QS", n: "QuantumScape Corp", e: "NYSE" },
+  ];
+  const urls = [];
+  window.fetchWithTimeout = async (url) => {
+    urls.push(url);
+    if (url.includes("/api/market-mode")) {
+      return { ok: true, json: async () => ({ enabled_market_modes: ["overseas_us"] }) };
+    }
+    return { ok: true, json: async () => quoteResponse({ symbol: "ANT" }) };
+  };
+  window.document.getElementById("overseas-stock-symbol").value = "ant";
+
+  await window.searchOverseasStock();
+
+  assert(urls.some((url) => url.includes("/api/overseas/stock/ANT")),
+    `회귀: 목록에 없는 심볼을 '여러 개' 오류로 막고 조회하지 않음 (${JSON.stringify(urls)})`);
+});
+
 test("심볼이 비어 있으면 브로커를 호출하지 않는다", async () => {
   const window = makeWindow();
   const calls = [];

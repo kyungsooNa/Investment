@@ -9,14 +9,18 @@ window.ALL_OVERSEAS_STOCKS = (function () {
 })();
 
 let _overseasStocksLoading = false;
+// localStorage 캐시는 즉시 쓰되, 페이지 로드마다 한 번은 서버 목록으로 갱신한다.
+// (갱신 없이 캐시만 쓰면 신규 상장 심볼이 영영 자동완성/종목명 해석에 안 나온다.)
+let _overseasStocksFresh = false;
 
 function _ensureOverseasStocksLoaded() {
-    if (window.ALL_OVERSEAS_STOCKS || _overseasStocksLoading) return;
+    if (_overseasStocksFresh || _overseasStocksLoading) return;
     _overseasStocksLoading = true;
     fetch('/api/overseas/stocks/list')
         .then(response => response.json())
         .then(json => {
             window.ALL_OVERSEAS_STOCKS = json.stocks || [];
+            _overseasStocksFresh = true;
             try {
                 localStorage.setItem(
                     'all_overseas_stocks_v1',
@@ -30,8 +34,12 @@ function _ensureOverseasStocksLoaded() {
         })
         .catch(() => {
             // 목록을 기다리는 화면(링크 진입한 현재가 조회)이 영영 멈추지 않도록 실패도 알린다.
-            window.ALL_OVERSEAS_STOCKS = [];
-            document.dispatchEvent(new CustomEvent('all-overseas-stocks-ready', { detail: [] }));
+            // 캐시가 있으면 그대로 유지한다.
+            if (!window.ALL_OVERSEAS_STOCKS) window.ALL_OVERSEAS_STOCKS = [];
+            document.dispatchEvent(new CustomEvent(
+                'all-overseas-stocks-ready',
+                { detail: window.ALL_OVERSEAS_STOCKS },
+            ));
         })
         .finally(() => { _overseasStocksLoading = false; });
 }
