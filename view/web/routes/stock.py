@@ -208,7 +208,7 @@ async def get_market_index_flow(index_code: str):
 
 @router.get("/market/premarket-direction")
 async def get_premarket_direction():
-    """오늘 코스피·SK하이닉스 시가 갭상승(시가>전일종가) 확률. 장전 태스크 결과가 없으면 즉석 계산한다.
+    """오늘 코스피·코스닥·SK하이닉스 상승 마감(종가>전일종가) 확률. 장전 태스크 결과가 없으면 즉석 계산한다.
 
     정보 표시 전용이며 매매 판단에 연결되지 않는다.
     """

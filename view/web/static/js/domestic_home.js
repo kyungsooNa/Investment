@@ -139,14 +139,35 @@ function _formatSignedPct(ratio) {
     return `${pct > 0 ? '+' : ''}${pct.toFixed(2)}%`;
 }
 
+/* 우세한 쪽 기준 표기: 상승 31% 를 '31% 하락'으로 오해하지 않도록 '▼ 하락 마감 69%' 로 쓴다. */
+function _describePremarketProb(probability) {
+    const prob = Number(probability || 0);
+    return prob >= 0.5
+        ? `▲ 상승 마감 ${Math.round(prob * 100)}%`
+        : `▼ 하락 마감 ${Math.round((1 - prob) * 100)}%`;
+}
+
+function _premarketTrackText(target) {
+    const track = target.track || {};
+    if (!track.n) return '적중률 기록 쌓는 중';
+    const parts = [`최근 ${track.n}일 ${track.hits}/${track.n}`];
+    const prev = target.previous;
+    if (prev && prev.actual_change !== null && prev.actual_change !== undefined) {
+        const hit = (Number(prev.probability) > 0.5) === (Number(prev.actual_change) > 0);
+        parts.push(`전일 ${_describePremarketProb(prev.probability)} → ${_formatSignedPct(prev.actual_change)} ${hit ? '적중' : '실패'}`);
+    }
+    return parts.join(' · ');
+}
+
 function _renderPremarketDirection(box, data) {
     const targets = (data.targets || []).map(target => {
         const prob = Number(target.probability || 0);
         const probClass = prob >= 0.6 ? 'text-red' : (prob <= 0.4 ? 'text-blue' : '');
         return `<div class="premarket-direction-head">
             <span class="premarket-direction-name">${escapeHtml(target.name || target.code || '')}</span>
-            <span class="premarket-direction-prob ${probClass}">${Math.round(prob * 100)}%</span>
+            <span class="premarket-direction-prob ${probClass}">${_describePremarketProb(prob)}</span>
             <strong>${escapeHtml(target.outlook || '')}</strong>
+            <span class="small">${_premarketTrackText(target)}</span>
         </div>`;
     }).join('');
     const features = (data.features || []).map(feature => {
@@ -156,7 +177,7 @@ function _renderPremarketDirection(box, data) {
     }).join('');
     box.innerHTML = `${targets}
         <ul class="premarket-direction-features">${features}</ul>
-        <p class="small">${escapeHtml(data.base_date || '')} 종가 대비 시가 갭 방향만 예측(백테스트 적중 약 75%) — 장 시작 후 매매 근거 아님</p>`;
+        <p class="small">${escapeHtml(data.base_date || '')} 종가보다 높게/낮게 끝날 확률(등락 폭 아님) · 백테스트 적중 약 61~65%, 확신 구간 약 70% · 예측력 대부분은 시가 갭이라 장중 진입 근거 아님</p>`;
 }
 
 async function loadPremarketDirection() {

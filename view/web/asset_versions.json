@@ -4,8 +4,8 @@
     "sha256": "10cf455d299e0426f41e9e1292c636cee1fe5de28adf9dc037fed2bebe4d4889"
   },
   "css/style.css": {
-    "version": 30,
-    "sha256": "73615a1feca80b865956b49af42b829958bc252fb4f0d4b0bfaa1bec833333a9"
+    "version": 31,
+    "sha256": "8f6dd57bf95d70627258998814aa00ea4dbdd3880b903710b243a2352f9166f8"
   },
   "js/autocomplete.js": {
     "version": 2,
@@ -28,8 +28,8 @@
     "sha256": "cec66ca2b35c2ec6207b13cbc02a296cec87c33771638a53fd13c1656509c76a"
   },
   "js/domestic_home.js": {
-    "version": 4,
-    "sha256": "44379174d025951507e37ebd2d3f3961b77d4b1eacb644f1e86fe7bc53e96094"
+    "version": 6,
+    "sha256": "79d6fe09434615c6273040c4bdc7a706a84d34953805fc20231ffc79263b7659"
   },
   "js/favorite.js": {
     "version": 8,
