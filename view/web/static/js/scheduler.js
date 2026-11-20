@@ -94,7 +94,6 @@ function renderSchedulerStatus(data) {
     badge.className = badgeState.className;
 
     const activeSchedulers = schedulers.filter(item => item.running).length;
-    const activeMarketTasks = marketTasks.filter(task => task.running || task.state === 'running').length;
     const armedMarketTasks = marketTasks.filter(isMarketTaskArmed).length;
     const canControl = data.can_control_scheduler !== false;
     if (startBtn) startBtn.style.display = canControl ? '' : 'none';
@@ -102,9 +101,9 @@ function renderSchedulerStatus(data) {
 
     if (data.status_note) {
         const kind = data.scheduler_kind === 'market_tasks' ? '태스크 기반' : '미구성';
-        info.textContent = `${kind} | ${data.status_note} | ${marketTaskSummary(marketTasks, armedMarketTasks, activeMarketTasks)}`;
+        info.textContent = `${kind} | ${data.status_note} | ${marketTaskSummary(marketTasks, armedMarketTasks)}`;
     } else {
-        info.textContent = `전략 스케줄러 ${activeSchedulers}/${schedulers.length} 실행 | ${marketTaskSummary(marketTasks, armedMarketTasks, activeMarketTasks)}`;
+        info.textContent = `전략 스케줄러 ${activeSchedulers}/${schedulers.length} 실행 | ${marketTaskSummary(marketTasks, armedMarketTasks)}`;
     }
     renderSchedulerSections(schedulers);
     renderMarketTasks(marketTasks);
@@ -121,13 +120,13 @@ function schedulerBadgeState(section) {
         return { text: '시장 태스크 실행', className: 'badge open' };
     }
     if (section.scheduler_kind === 'market_tasks' && tasks.some(isMarketTaskArmed)) {
-        return { text: '태스크 가동 중', className: 'badge open' };
+        return { text: '태스크 정상 가동', className: 'badge open' };
     }
     return { text: '정지', className: 'badge closed' };
 }
 
-// 시장 태스크는 폴링/티켓 사이에 idle 로 돌아온다 — `실행 중` 만 세면 정상 가동을
-// "0개 실행" 으로 보여줘 멈춘 것처럼 읽힌다. 가동(armed)과 실행 중을 함께 적는다.
+// 시장 태스크는 폴링/티켓 사이에 idle 로 돌아온다. 사용자에게는 내부 순간 상태보다
+// 루프가 살아 있는지(armed)를 가동 여부로 보여준다.
 function isMarketTaskArmed(task) {
     if (task.armed === undefined || task.armed === null) {
         return !!(task.running || task.state === 'running');
@@ -135,9 +134,13 @@ function isMarketTaskArmed(task) {
     return !!task.armed;
 }
 
-function marketTaskSummary(tasks, armed, active) {
+function marketTaskSummary(tasks, armed) {
     if (!tasks || tasks.length === 0) return '시장 태스크 없음';
-    return `시장 태스크 ${armed}/${tasks.length} 가동 (실행 중 ${active})`;
+    if (armed === 0) return `시장 태스크 0/${tasks.length} 미기동`;
+    if (armed < tasks.length) {
+        return `시장 태스크 ${armed}/${tasks.length} 가동 · ${tasks.length - armed}개 미기동`;
+    }
+    return `시장 태스크 ${armed}/${tasks.length} 정상 가동`;
 }
 
 function jsString(value) {
@@ -248,18 +251,29 @@ function renderMarketTasks(tasks) {
         const running = task.running || task.state === 'running';
         const armed = isMarketTaskArmed(task);
         const stateBadge = running
-            ? '<span class="badge open">실행 중</span>'
+            ? '<span class="badge open">현재 처리 중</span>'
             : (armed
-                ? '<span class="badge paper">가동 중(대기)</span>'
+                ? '<span class="badge open">정상 가동</span>'
                 : '<span class="badge closed">미기동</span>');
         const modeBadge = task.live_trading
             ? '<span class="badge closed">실주문</span>'
             : '<span class="badge paper">관찰/Paper</span>';
         const progress = task.progress || {};
         const watchCount = progress.watch_count ?? progress.watch ?? progress.candidates;
+        const phaseLabels = {
+            init: '초기화 중',
+            preparing: '후보·세션 준비 중',
+            polling: '종목 감시 중',
+            warmup: '개장 준비 중',
+            eod: '마감 처리 중',
+            closed: '장외 대기',
+            holiday: '휴장 대기',
+        };
+        const phaseLabel = phaseLabels[progress.phase]
+            || (armed ? '예약·주기 실행 중' : '미기동');
         const progressText = watchCount != null
-            ? `감시 ${Number(watchCount).toLocaleString()}개`
-            : `상태 ${escapeHtml(task.state || '-')}`;
+            ? `${phaseLabel} · 감시 ${Number(watchCount).toLocaleString()}개`
+            : phaseLabel;
         // 태스크는 폴링 사이에 대부분 idle 로 돌아온다 — 상태값만으로는 장 마감·휴장·
         // 감시목록 0개가 전부 똑같이 보이므로, 마지막 패스가 무엇을 했는지 함께 적는다.
         const phaseDetail = progress.phase_detail

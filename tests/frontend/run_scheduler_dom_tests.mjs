@@ -176,10 +176,10 @@ test("가동 중인 태스크는 idle 이어도 '정지'/'0개 실행'으로 보
 
   const text = window.document.body.textContent;
   const badge = window.document.getElementById("scheduler-status-badge");
-  assert(badge.textContent === "태스크 가동 중",
+  assert(badge.textContent === "태스크 정상 가동",
     `가동 중인 태스크가 있으면 '정지'가 아니어야 함 (실제 "${badge.textContent}")`);
-  assert(text.includes("2/2 가동"), `가동 수를 세어 보여줘야 함 (실제 "${text}")`);
-  assert(text.includes("가동 중(대기)"), `카드 배지가 미기동과 구분돼야 함 (실제 "${text}")`);
+  assert(text.includes("2/2 정상 가동"), `가동 수를 세어 보여줘야 함 (실제 "${text}")`);
+  assert(text.includes("정상 가동"), `카드 배지가 미기동과 구분돼야 함 (실제 "${text}")`);
   assert(text.includes("주말 — 미국장 휴장입니다."), `주말 사유를 보여줘야 함 (실제 "${text}")`);
   assert(text.includes("16:30 ET 하루 1회 실행"), `dry-run 트리거 시각을 보여줘야 함 (실제 "${text}")`);
 });
@@ -212,7 +212,7 @@ test("섹션 헤더 배지도 가동 중인 태스크를 '정지'로 표시하�
 
   const sectionBadge = window.document
     .getElementById("scheduler-strategies").querySelector(".badge");
-  assert(sectionBadge.textContent === "태스크 가동 중",
+  assert(sectionBadge.textContent === "태스크 정상 가동",
     `섹션 헤더도 상단 배지와 같은 판정이어야 함 (실제 "${sectionBadge.textContent}")`);
 });
 
@@ -277,7 +277,7 @@ test("기동되지 않은 태스크는 '미기동'으로 구분한다", async ()
   const text = window.document.body.textContent;
   const badge = window.document.getElementById("scheduler-status-badge");
   assert(text.includes("미기동"), `미기동 배지를 보여줘야 함 (실제 "${text}")`);
-  assert(text.includes("0/1 가동"), `가동 0 을 보여줘야 함 (실제 "${text}")`);
+  assert(text.includes("0/1 미기동"), `미기동 수를 보여줘야 함 (실제 "${text}")`);
   assert(badge.textContent === "정지", `가동 태스크가 없으면 정지여야 함 (실제 "${badge.textContent}")`);
 });
 
