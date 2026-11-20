@@ -48,10 +48,10 @@ const PREMARKET_REPORT = {
     date: "2026-11-19",
     base_date: "2026-11-18",
     targets: [
-      { code: "KOSPI", name: "코스피", probability: 0.723, outlook: "갭상승 우세", train_days: 1450,
+      { code: "KOSPI", name: "코스피", probability: 0.723, outlook: "상승 우세", train_days: 1450,
         track: { n: 20, hits: 15, confident_n: 12, confident_hits: 10 },
-        previous: { date: "2026-11-18", probability: 0.65, actual_gap: 0.0045 } },
-      { code: "000660", name: "SK하이닉스", probability: 0.31, outlook: "갭하락 우세", train_days: 1450,
+        previous: { date: "2026-11-18", probability: 0.65, actual_change: 0.0045 } },
+      { code: "000660", name: "SK하이닉스", probability: 0.31, outlook: "하락 우세", train_days: 1450,
         track: { n: 0, hits: 0, confident_n: 0, confident_hits: 0 }, previous: null },
     ],
     features: [
@@ -173,24 +173,26 @@ test("주도 테마 데이터가 없으면 안내 문구 표시", async () => {
   assert(box.textContent.includes("수집 중"), "빈 데이터 안내 누락");
 });
 
-test("장전 시가 갭상승 확률을 대상별로, 밤사이 지표와 함께 표시", async () => {
+test("장전 종가 방향 확률을 우세한 쪽 기준으로 대상별 표시", async () => {
   const window = await makeWindow();
   const box = window.document.getElementById("premarket-direction");
   assert(window.__fetched.includes("/api/market/premarket-direction"), "장전 예측 API 미호출");
   const rows = box.querySelectorAll(".premarket-direction-head");
   assert(rows.length === 2, `대상 수 불일치: ${rows.length}`);
-  assert(rows[0].textContent.includes("코스피") && rows[0].textContent.includes("72%"), "코스피 확률 누락");
-  assert(rows[0].textContent.includes("갭상승 우세"), "코스피 판정 누락");
-  assert(rows[0].querySelector(".premarket-direction-prob.text-red") !== null, "갭상승 우세 색상 누락");
-  assert(rows[1].textContent.includes("SK하이닉스") && rows[1].textContent.includes("31%"), "하이닉스 확률 누락");
-  assert(rows[1].querySelector(".premarket-direction-prob.text-blue") !== null, "갭하락 우세 색상 누락");
+  assert(rows[0].textContent.includes("코스피") && rows[0].textContent.includes("▲ 상승 마감 72%"), "코스피 확률 누락");
+  assert(rows[0].textContent.includes("상승 우세"), "코스피 판정 누락");
+  assert(rows[0].querySelector(".premarket-direction-prob.text-red") !== null, "상승 우세 색상 누락");
+  // 31% 상승 = 69% 하락 — 낮은 확률을 '하락 폭'으로 오해하지 않게 우세한 쪽으로 표기
+  assert(rows[1].textContent.includes("SK하이닉스") && rows[1].textContent.includes("▼ 하락 마감 69%"), "하이닉스 확률 누락");
+  assert(!rows[1].textContent.includes("31%"), "하락 우세인데 상승 확률로 표기");
+  assert(rows[1].querySelector(".premarket-direction-prob.text-blue") !== null, "하락 우세 색상 누락");
   assert(rows[0].textContent.includes("최근 20일 15/20"), "적중률 누락");
-  assert(rows[0].textContent.includes("전일 65% → +0.45% 적중"), "전 거래일 결과 누락");
+  assert(rows[0].textContent.includes("전일 ▲ 상승 마감 65% → +0.45% 적중"), "전 거래일 결과 누락");
   assert(rows[1].textContent.includes("기록 쌓는 중"), "기록 없음 안내 누락");
   assert(box.textContent.includes("S&P500") && box.textContent.includes("+1.23%"), "지표 등락 누락");
   assert(box.textContent.includes("-5.10%"), "음수 지표 누락");
   assert(box.textContent.includes("2026-11-18"), "기준일 누락");
-  assert(box.textContent.includes("장 시작 후 매매 근거 아님"), "참고용 안내 누락");
+  assert(box.textContent.includes("등락 폭 아님"), "확률 의미 안내 누락");
 });
 
 test("장전 예측 실패 시 사유를 표시", async () => {

@@ -1158,14 +1158,14 @@ def test_ai_news_review_returns_502_on_ai_failure_or_blank_result(
 
 
 def test_get_premarket_direction_returns_forecast(web_client, mock_web_ctx):
-    """GET /api/market/premarket-direction 은 오늘 시가 갭상승 확률을 내려준다."""
+    """GET /api/market/premarket-direction 은 오늘 종가 상승 마감 확률을 내려준다."""
     from unittest.mock import AsyncMock
 
     forecast = {
         "ok": True, "date": "2026-11-19", "base_date": "2026-11-18",
         "targets": [
-            {"code": "KOSPI", "name": "코스피", "probability": 0.72, "outlook": "갭상승 우세", "train_days": 1450},
-            {"code": "000660", "name": "SK하이닉스", "probability": 0.31, "outlook": "갭하락 우세", "train_days": 1450},
+            {"code": "KOSPI", "name": "코스피", "probability": 0.72, "outlook": "상승 우세", "train_days": 1450},
+            {"code": "000660", "name": "SK하이닉스", "probability": 0.31, "outlook": "하락 우세", "train_days": 1450},
         ],
         "features": [{"name": "spx", "label": "S&P500", "value": 0.012}],
     }

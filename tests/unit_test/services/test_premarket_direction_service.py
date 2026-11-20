@@ -1,4 +1,4 @@
-"""장전 시가 갭상승(A) 확률 예측 서비스 단위 테스트."""
+"""장전 종가 상승 마감(B: 종가>전일종가) 확률 예측 서비스 단위 테스트."""
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta
@@ -28,7 +28,7 @@ def _days(n, end=date(2026, 11, 18)):
 
 
 class FakeFetcher:
-    """미국 지표가 오르면 다음 한국 거래일 시가가 갭상승하도록 만든 합성 데이터."""
+    """미국 지표가 오르면 다음 한국 거래일이 상승 마감하도록 만든 합성 데이터."""
 
     def __init__(self, n=400, today="2026-11-19", today_us_move=0.02, missing=None, today_open=1.0):
         days = _days(n)
@@ -96,10 +96,10 @@ async def test_refresh_predicts_up_after_strong_us_session_and_notifies():
     assert result["ok"] is True
     assert result["date"] == "2026-11-19"
     assert result["base_date"] == "2026-11-18"          # 오늘 행은 기준일이 아니다
-    assert [t["code"] for t in result["targets"]] == ["KOSPI", "000660"]
+    assert [t["code"] for t in result["targets"]] == ["KOSPI", "KOSDAQ", "000660"]
     for target in result["targets"]:
         assert target["probability"] > 0.6
-        assert target["outlook"] == "갭상승 우세"
+        assert target["outlook"] == "상승 우세"
         assert target["train_days"] >= 250
     assert {f["name"] for f in result["features"]} == {"sox", "ndx", "spx", "ewy", "vix", "usdkrw", "mu"}
     spx = next(f for f in result["features"] if f["name"] == "spx")
@@ -109,8 +109,9 @@ async def test_refresh_predicts_up_after_strong_us_session_and_notifies():
     notifier.emit.assert_awaited_once()
     kwargs = notifier.emit.await_args.kwargs
     assert kwargs["category"] == NotificationCategory.STRATEGY
-    assert "갭" in kwargs["title"]
-    assert "코스피" in kwargs["message"] and "SK하이닉스" in kwargs["message"]
+    assert "종가" in kwargs["title"]
+    assert "코스피 ▲ 상승 마감" in kwargs["message"]
+    assert "코스닥" in kwargs["message"] and "SK하이닉스" in kwargs["message"]
     assert kwargs["metadata"]["event"] == "premarket_direction_forecast"
 
 
@@ -119,13 +120,14 @@ async def test_refresh_predicts_down_after_weak_us_session():
     svc = _service(FakeFetcher(today_us_move=-0.02))
     result = await svc.refresh(notify=False)
     assert all(t["probability"] < 0.4 for t in result["targets"])
-    assert all(t["outlook"] == "갭하락 우세" for t in result["targets"])
+    assert all(t["outlook"] == "하락 우세" for t in result["targets"])
 
 
 @pytest.mark.asyncio
 async def test_hynix_target_uses_micron_on_top_of_base_features():
-    kospi, hynix = TARGETS
+    kospi, kosdaq, hynix = TARGETS
     assert kospi.features == FORECAST_FEATURES
+    assert kosdaq.features == FORECAST_FEATURES
     assert [f.name for f in hynix.features] == [f.name for f in FORECAST_FEATURES] + ["mu"]
 
 
@@ -185,12 +187,12 @@ async def test_get_or_compute_retries_after_failed_result():
 
 def test_summarize_track_counts_recent_hits_and_confident_hits():
     history = {
-        "2026-11-13": {"KOSPI": {"probability": 0.70, "actual_gap": 0.004}},   # 확신 적중
-        "2026-11-16": {"KOSPI": {"probability": 0.55, "actual_gap": -0.002}},  # 비확신 실패
-        "2026-11-17": {"KOSPI": {"probability": 0.30, "actual_gap": 0.001}},   # 확신 실패
-        "2026-11-18": {"KOSPI": {"probability": 0.35, "actual_gap": -0.006}},  # 확신 적중
-        "2026-11-19": {"KOSPI": {"probability": 0.80, "actual_gap": None}},    # 미확정 → 제외
-        "2026-11-12": {"000660": {"probability": 0.9, "actual_gap": 0.01}},    # 다른 대상
+        "2026-11-13": {"KOSPI": {"probability": 0.70, "actual_change": 0.004}},   # 확신 적중
+        "2026-11-16": {"KOSPI": {"probability": 0.55, "actual_change": -0.002}},  # 비확신 실패
+        "2026-11-17": {"KOSPI": {"probability": 0.30, "actual_change": 0.001}},   # 확신 실패
+        "2026-11-18": {"KOSPI": {"probability": 0.35, "actual_change": -0.006}},  # 확신 적중
+        "2026-11-19": {"KOSPI": {"probability": 0.80, "actual_change": None}},    # 미확정 → 제외
+        "2026-11-12": {"000660": {"probability": 0.9, "actual_change": 0.01}},    # 다른 대상
     }
     assert summarize_track(history, "KOSPI", window=20) == {
         "n": 4, "hits": 2, "confident_n": 3, "confident_hits": 2,
@@ -202,44 +204,44 @@ def test_summarize_track_counts_recent_hits_and_confident_hits():
 
 
 @pytest.mark.asyncio
-async def test_refresh_records_prediction_and_fills_past_actual_gap(tmp_path):
+async def test_refresh_records_prediction_and_fills_past_actual_change(tmp_path):
     path = tmp_path / "history.json"
-    fetcher = FakeFetcher(today_open=None)          # 장 시작 전: 오늘 시가 없음
+    fetcher = FakeFetcher(today_open=None)          # 장 시작 전: 오늘 일봉 없음
     prev = fetcher.kr[-2]["close"]
-    gap_1118 = fetcher.kr[-1]["open"] / prev - 1     # 11-18 실제 갭
+    chg_1118 = fetcher.kr[-1]["close"] / prev - 1    # 11-18 실제 종가 등락
     path.write_text(json.dumps({
-        "2026-11-18": {"KOSPI": {"probability": 0.8, "actual_gap": None},
-                       "000660": {"probability": 0.2, "actual_gap": None}},
+        "2026-11-18": {"KOSPI": {"probability": 0.8, "actual_change": None},
+                       "000660": {"probability": 0.2, "actual_change": None}},
     }), encoding="utf-8")
 
     result = await _service(fetcher, history_path=path).refresh(notify=False)
 
     saved = json.loads(path.read_text(encoding="utf-8"))
-    assert saved["2026-11-18"]["KOSPI"]["actual_gap"] == pytest.approx(gap_1118)
+    assert saved["2026-11-18"]["KOSPI"]["actual_change"] == pytest.approx(chg_1118)
     today = saved["2026-11-19"]
     assert today["KOSPI"]["probability"] == pytest.approx(result["targets"][0]["probability"])
-    assert today["KOSPI"]["actual_gap"] is None
+    assert today["KOSPI"]["actual_change"] is None
     kospi = result["targets"][0]
     assert kospi["track"]["n"] == 1
-    assert kospi["previous"] == {"date": "2026-11-18", "probability": 0.8, "actual_gap": pytest.approx(gap_1118)}
+    assert kospi["previous"] == {"date": "2026-11-18", "probability": 0.8, "actual_change": pytest.approx(chg_1118)}
 
 
 @pytest.mark.asyncio
-async def test_refresh_after_open_fills_today_actual_and_keeps_it(tmp_path):
+async def test_intraday_today_bar_is_not_taken_as_actual_close(tmp_path):
+    """장중 조회 시 오늘 일봉의 '종가'는 현재가라 확정값이 아니다 — 다음 날 채운다."""
     path = tmp_path / "history.json"
     fetcher = FakeFetcher(today_open=2000.0)
     await _service(fetcher, history_path=path).refresh(notify=False)
     saved = json.loads(path.read_text(encoding="utf-8"))
-    expected = 2000.0 / fetcher.kr[-2]["close"] - 1
-    assert saved["2026-11-19"]["KOSPI"]["actual_gap"] == pytest.approx(expected)
+    assert saved["2026-11-19"]["KOSPI"]["actual_change"] is None
 
 
 @pytest.mark.asyncio
 async def test_notification_goes_external_with_track_and_previous_result(tmp_path):
     path = tmp_path / "history.json"
     path.write_text(json.dumps({
-        "2026-11-18": {"KOSPI": {"probability": 0.8, "actual_gap": 0.0045},
-                       "000660": {"probability": 0.2, "actual_gap": 0.003}},
+        "2026-11-18": {"KOSPI": {"probability": 0.8, "actual_change": 0.0045},
+                       "000660": {"probability": 0.2, "actual_change": 0.003}},
     }), encoding="utf-8")
     notifier = MagicMock()
     notifier.emit = AsyncMock()
@@ -250,8 +252,8 @@ async def test_notification_goes_external_with_track_and_previous_result(tmp_pat
     assert kwargs["metadata"]["force_external"] is True        # 텔레그램(외부) 전송
     message = kwargs["message"]
     assert "전 거래일(2026-11-18)" in message
-    assert "코스피 80% → 실제 +0.45% 적중" in message
-    assert "SK하이닉스 20% → 실제 +0.30% 실패" in message
+    assert "코스피 ▲ 상승 마감 80% → 실제 +0.45% 적중" in message
+    assert "SK하이닉스 ▼ 하락 마감 80% → 실제 +0.30% 실패" in message
     assert "최근 20일 적중" in message
 
 

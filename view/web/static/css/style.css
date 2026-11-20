@@ -339,7 +339,7 @@ body {
 
 .premarket-direction-name { min-width: 6em; font-weight: 600; }
 
-.premarket-direction-prob { font-size: 1.6em; font-weight: 700; }
+.premarket-direction-prob { font-size: 1.25em; font-weight: 700; }
 
 .premarket-direction-features {
     list-style: none;

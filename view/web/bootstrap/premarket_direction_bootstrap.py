@@ -1,4 +1,4 @@
-"""장전 시가 갭 예측(정보 표시 전용, 매매 게이트 미연결) 서비스 + 장전 알림 태스크 조립."""
+"""장전 종가 방향 예측(정보 표시 전용, 매매 게이트 미연결) 서비스 + 장전 알림 태스크 조립."""
 from __future__ import annotations
 
 from services.premarket_direction_service import DailyHistoryFetcher, PremarketDirectionService
