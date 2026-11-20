@@ -85,6 +85,10 @@ function _resolveOverseasStockInput(raw, exchange) {
             exchange: String(matches[0].e || exchange).toUpperCase(),
         };
     }
+    // 심볼 형태(영문 1~5자, 클래스 접미 허용) 입력은 목록에 없어도(신규 상장 등) 심볼로 직접 조회한다.
+    if (matches.length > 1 && /^[A-Z]{1,5}([.\/][A-Z])?$/.test(upper)) {
+        return { symbol: upper, exchange };
+    }
     if (matches.length > 1) {
         return { error: `'${query}'에 해당하는 종목이 ${matches.length}개 있습니다. 자동완성에서 선택해주세요.` };
     }

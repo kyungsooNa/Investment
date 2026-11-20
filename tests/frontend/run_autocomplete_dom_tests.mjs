@@ -172,4 +172,31 @@ test("해외 자동완성: 미선택 Enter 시 onConfirm(loadOverseasQuote) 호�
   assert(searched === true, "미선택 Enter 시 직접 입력 조회가 트리거되지 않음");
 });
 
+test("해외 자동완성: localStorage 캐시가 있어도 서버 목록을 다시 받아 신규 상장 심볼을 반영한다", async () => {
+  const dom = new JSDOM(`<!DOCTYPE html><html><body>${SCAFFOLD}</body></html>`, {
+    url: "http://localhost/stock",
+    runScripts: "dangerously",
+  });
+  const { window } = dom;
+  window.localStorage.setItem("all_overseas_stocks_v1", JSON.stringify([{ s: "AAPL", n: "Apple Inc", e: "NASD" }]));
+  window.fetch = async () => ({
+    json: async () => ({ stocks: [{ s: "AAPL", n: "Apple Inc", e: "NASD" }, { s: "ANT", n: "New Listing Inc", e: "NYSE" }] }),
+  });
+  window.loadOverseasQuote = () => {};
+  for (const path of [AUTOCOMPLETE_JS, OVERSEAS_AUTOCOMPLETE_JS]) {
+    const el = window.document.createElement("script");
+    el.textContent = readFileSync(path, "utf8");
+    window.document.body.appendChild(el);
+  }
+  await new Promise((r) => setTimeout(r, 0));
+  await new Promise((r) => setTimeout(r, 0));
+
+  typeInto(window, "overseas-symbol", "ANT");
+  const items = Array.from(window.document.getElementById("overseas-autocomplete-list").querySelectorAll("li"));
+  assert(items.some((li) => li.textContent.startsWith("ANT")),
+    "회귀: 캐시된 옛 심볼 목록만 써서 신규 상장 심볼이 자동완성에 나오지 않음");
+  const cached = JSON.parse(window.localStorage.getItem("all_overseas_stocks_v1"));
+  assert(cached.some((s) => s.s === "ANT"), "회귀: 새 목록이 localStorage 에 저장되지 않음");
+});
+
 await run();

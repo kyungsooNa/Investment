@@ -72,8 +72,8 @@
     "sha256": "5fa0d3d5ce485cf50c281df984b8b58b79e503e0fed3b476b97dd700828505dc"
   },
   "js/overseas_autocomplete.js": {
-    "version": 2,
-    "sha256": "87efd9e96ee90607beb0510939070de1e9bfa9f32170a0f529b6cfc9b102d225"
+    "version": 3,
+    "sha256": "f2601bfe82d104885aa3003d2c60e76b3a749773e1443342e9712252d969bdeb"
   },
   "js/overseas_marketcap.js": {
     "version": 3,
@@ -84,8 +84,8 @@
     "sha256": "3a4d63c78e54c29ad9fc48b443b9466c46a14a0662cf47dafd2d6072e8631156"
   },
   "js/overseas_stock.js": {
-    "version": 3,
-    "sha256": "d032fdc8c3b423d477609d9144cf372555c7d12a5b8aa6ae915a223c27f4009e"
+    "version": 4,
+    "sha256": "d2f5c6493950fdcef3dc4221a55100d713155aa438a9f791ac93f6a35905e01b"
   },
   "js/pagination.js": {
     "version": 1,
