@@ -264,3 +264,89 @@ async def test_refresh_without_history_path_does_not_persist(tmp_path, monkeypat
     assert result["ok"] is True
     assert result["targets"][0]["track"]["n"] == 0   # 기록 파일이 없으니 확정된 과거 예측도 없다
     assert not (tmp_path / "data").exists()
+
+
+# ── 장 마감 후 결과 보고 ───────────────────────────────────────────────
+
+def test_summarize_track_without_window_counts_all_history():
+    history = {f"2026-10-{d:02d}": {"KOSPI": {"probability": 0.7, "actual_change": 0.01 if d % 3 else -0.01}}
+               for d in range(1, 31)}
+    total = summarize_track(history, "KOSPI", window=None)
+    assert total["n"] == 30
+    assert total["hits"] == 20          # d % 3 == 0 인 10일만 실패
+
+
+@pytest.mark.asyncio
+async def test_report_close_fills_today_actual_and_notifies_hit_and_totals(tmp_path):
+    path = tmp_path / "history.json"
+    fetcher = FakeFetcher(today_open=1.0)
+    prev_close = fetcher.kr[-2]["close"]
+    fetcher.kr[-1].update(open=prev_close, close=prev_close * 0.98)   # 오늘 확정 종가 -2%
+    path.write_text(json.dumps({
+        "2026-11-18": {"KOSPI": {"probability": 0.6, "actual_change": 0.01}},
+        "2026-11-19": {"KOSPI": {"probability": 0.23, "actual_change": None},
+                       "000660": {"probability": 0.7, "actual_change": None}},
+    }), encoding="utf-8")
+    notifier = MagicMock()
+    notifier.emit = AsyncMock()
+    svc = _service(fetcher, notifier=notifier, history_path=path)
+
+    result = await svc.report_close("2026-11-19", notify=True)
+
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    assert saved["2026-11-19"]["KOSPI"]["actual_change"] == pytest.approx(-0.02)
+    kospi = next(t for t in result["targets"] if t["code"] == "KOSPI")
+    assert kospi["hit"] is True                                      # 하락 77% 예측 → -2% 마감
+    assert kospi["total"] == {"n": 2, "hits": 2, "confident_n": 2, "confident_hits": 2}
+    hynix = next(t for t in result["targets"] if t["code"] == "000660")
+    assert hynix["hit"] is False                                     # 상승 70% 예측 → -2% 마감
+
+    kwargs = notifier.emit.await_args.kwargs
+    assert kwargs["metadata"]["force_external"] is True
+    assert kwargs["metadata"]["event"] == "premarket_direction_result"
+    message = kwargs["message"]
+    assert "코스피 ▼ 하락 마감 77% → 실제 -2.00% 적중" in message
+    assert "SK하이닉스 ▲ 상승 마감 70% → 실제 -2.00% 실패" in message
+    assert "코스피 전체 2/2(100%)" in message
+
+
+@pytest.mark.asyncio
+async def test_report_close_skips_when_no_prediction_recorded_today(tmp_path):
+    path = tmp_path / "history.json"
+    notifier = MagicMock()
+    notifier.emit = AsyncMock()
+    result = await _service(FakeFetcher(), notifier=notifier, history_path=path).report_close("2026-11-19")
+    assert result == {"ok": True, "date": "2026-11-19", "skipped": "no_prediction"}
+    notifier.emit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_report_close_reports_error_when_close_not_yet_available(tmp_path):
+    path = tmp_path / "history.json"
+    path.write_text(json.dumps({"2026-11-19": {"KOSPI": {"probability": 0.3, "actual_change": None}}}),
+                    encoding="utf-8")
+    notifier = MagicMock()
+    notifier.emit = AsyncMock()
+    result = await _service(FakeFetcher(today_open=None), notifier=notifier,
+                            history_path=path).report_close("2026-11-19")
+    assert result["ok"] is False
+    assert "KOSPI" in result["error"]
+    notifier.emit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_error_message_names_exception_type_when_message_is_empty(tmp_path):
+    """httpx.ReadTimeout 처럼 메시지가 빈 예외도 원인을 알 수 있어야 한다."""
+    class ReadTimeout(Exception):
+        pass
+
+    fetcher = FakeFetcher()
+    fetcher.fetch_us = AsyncMock(side_effect=ReadTimeout())
+    assert (await _service(fetcher).refresh(notify=False))["error"] == "ReadTimeout"
+
+    path = tmp_path / "history.json"
+    path.write_text(json.dumps({"2026-11-19": {"KOSPI": {"probability": 0.3, "actual_change": None}}}),
+                    encoding="utf-8")
+    fetcher.fetch_kr_index = AsyncMock(side_effect=ReadTimeout())
+    result = await _service(fetcher, history_path=path).report_close("2026-11-19")
+    assert result["error"] == "ReadTimeout"

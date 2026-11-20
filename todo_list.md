@@ -429,6 +429,7 @@
 - **예산 조정 (2026-11-07)**: `service_container.py` 980→**981줄** 예산. 기존 `MicrostructureCaptureTask` 조립에 kwarg 1줄(1-8 Stage2 후보 보충)을 더한 것으로 서비스군 추가가 아니다. 새 서비스군은 여전히 전용 bootstrap 으로 뺀다.
 - **예산 조정 (2026-11-17)**: `service_container.py` 981→**982줄** 예산. 기존 `OperationalBackupTask` 조립에 `backup_root` kwarg 1줄(설정으로 백업·코퍼스 아카이브를 데이터 디스크 밖에 두기)을 더한 것으로 서비스군 추가가 아니다.
 - **예산 조정 (2026-11-19)**: `service_container.py` 982→**984줄** 예산. 장전 코스피 방향 예측 서비스군은 규약대로 `premarket_direction_bootstrap.py`(예산 40줄 / import 2개)로 분리했고, `service_container.py` 에는 그 import 1줄과 `build_premarket_direction(...)` 호출 1줄만 더했다 (`index_flow_bootstrap` 과 같은 패턴).
+- **예산 조정 (2026-11-20)**: `premarket_direction_bootstrap.py` (40줄, import 2개)→**(45줄, import 3개)**. 같은 서비스군의 장마감 채점 태스크(`PremarketDirectionResultTask`)를 같은 모듈에서 조립 — 31줄. `service_container.py` 는 호출 인자만 바뀌어 줄수 불변.
 - **(2026-09-17) 운영 문서 동기화 2건**: #963 이 에이전트 지침(AGENTS/CLAUDE)의 **머지 게이트를 테스트 CI 단독**으로 명확히 했고(리뷰 봇은 게이트 아님), #961 이 `__Run.bat` 기동 전 갱신 절차를 손봤다. 코드 축은 아니지만 이 문서의 '게시 흐름' 과 짝이라 기록만 남긴다.
 - [x] **(2026-08-30 등재 → 2026-09-17 완료) 가드의 사각지대 — 조립이 `overseas_bootstrap.py` 로 옮겨가 그대로 쌓이고 있었다**: 08-22 추출 당시 220줄이던 파일이 #931/#932/#934/#935 를 거치며 **481줄 / services·task import 30개**가 됐다(9일 만에 2.2배). `service_container.py` 의 예산이 지켜진 이유의 상당 부분이 "해외 조립이 저기로 갔기 때문" 이라 **가드가 측정하는 곳과 실제로 누적되는 곳이 어긋났다**. #888 이 고정한 것은 파일 하나이지 규약이 아니다.
     - **2026-10-16 계측 갱신**: 미국 Minervini Stage 2 전략 추가 시 기존 예산을 올리지 않고 Pocket Pivot·Minervini 조립을 `overseas_growth_strategy_bootstrap.py` 로 분리했다. 구조 가드는 새 모듈을 **80줄 / services·task import 3개** 예산으로 함께 감시한다.

@@ -59,6 +59,7 @@ def _make_fake_context(runtime_mode: RuntimeMode = RuntimeMode.ALL):
         "market_index_threshold_alert_task",
         "market_timing_daily_update_task",
         "premarket_direction_forecast_task",
+        "premarket_direction_result_task",
         "ytd_ranking_report_task",
         "daily_investor_flow_report_task",
         "youtube_digest_task",
@@ -101,17 +102,17 @@ def test_creates_foreground_even_in_batch_only_mode(patched_scheduler_deps):
 
 # ---------- mode=ALL 회귀 (현행 동작 100% 유지) ----------
 
-def test_all_mode_registers_32_tasks_to_background(patched_scheduler_deps):
+def test_all_mode_registers_33_tasks_to_background(patched_scheduler_deps):
     ctx = _make_fake_context(RuntimeMode.ALL)
     _run(ctx)
     bg = patched_scheduler_deps["BackgroundScheduler"].return_value
-    assert bg.register.call_count == 32
+    assert bg.register.call_count == 33
 
 
 def test_all_mode_registers_18_tasks_to_time_dispatcher(patched_scheduler_deps):
     ctx = _make_fake_context(RuntimeMode.ALL)
     _run(ctx)
-    assert ctx.time_dispatcher.register_task.call_count == 18
+    assert ctx.time_dispatcher.register_task.call_count == 19
 
 
 def test_batch_tasks_use_safe_outage_recovery_policy(patched_scheduler_deps):
@@ -304,7 +305,7 @@ def test_batch_only_registers_after_market_tasks_no_watchdog(patched_scheduler_d
     expected = {
         "ranking_task", "minervini_update_task", "daily_price_collector_task",
         "ohlcv_update_task", "premium_watchlist_generator_task", "newhigh_task",
-        "operational_backup_task", "log_cleanup_task", "post_market_replay_audit_task",
+        "premarket_direction_result_task", "operational_backup_task", "log_cleanup_task", "post_market_replay_audit_task",
         "newhigh_strategy_coverage_backtest_task", "weekly_backtest_campaign_task",
         "strategy_log_report_task", "after_market_reconcile_task",
         "theme_classification_task", "theme_daily_leader_report_task",
@@ -360,6 +361,6 @@ def test_skips_none_tasks(patched_scheduler_deps):
     _run(ctx)
     # opening_position_reconcile_task 는 TRADING 그룹 + TimeDispatcher 등록 대상이었으므로
     # 둘 다 -1 감소한다.
-    assert ctx.time_dispatcher.register_task.call_count == 17
+    assert ctx.time_dispatcher.register_task.call_count == 18
     bg = patched_scheduler_deps["BackgroundScheduler"].return_value
-    assert bg.register.call_count == 31
+    assert bg.register.call_count == 32

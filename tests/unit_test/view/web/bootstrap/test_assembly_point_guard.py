@@ -47,7 +47,7 @@ MODULE_BUDGETS = {
     "market_data_bootstrap.py": (170, 8),
     "overseas_bootstrap.py": (560, 33),
     "overseas_growth_strategy_bootstrap.py": (80, 3),
-    "premarket_direction_bootstrap.py": (40, 2),
+    "premarket_direction_bootstrap.py": (45, 3),  # 2026-11-20: 장마감 채점 태스크 +1 import
     "query_bootstrap.py": (205, 9),
     "realtime_bootstrap.py": (200, 10),
     "repository_bootstrap.py": (80, 2),
