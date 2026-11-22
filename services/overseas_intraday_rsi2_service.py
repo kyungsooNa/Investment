@@ -19,6 +19,7 @@ Minervini Stage 2 대체로 `close > 추세MA` 를 쓰는 것은 dry-run 과 동
 from __future__ import annotations
 
 import logging
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
@@ -144,3 +145,28 @@ class OverseasIntradayRSI2Service(OverseasIntradayStrategyBase):
             return 100.0
         rs = avg_gain / avg_loss
         return 100.0 - (100.0 / (1.0 + rs))
+
+
+class OverseasIntradayRSI2ShadowService(OverseasIntradayRSI2Service):
+    """동일 후보·틱으로 국면 게이트만 제외한 독립 Paper 관찰 경로."""
+
+    STRATEGY_NAME = "RSI2Pullback_overseas_intraday_no_regime"
+    EVENT_PREFIX = "overseas_intraday_rsi2_shadow"
+
+    def __init__(self, *, primary_service: OverseasIntradayRSI2Service, **kwargs) -> None:
+        kwargs["market_timing_gate"] = False
+        super().__init__(**kwargs)
+        self._primary_service = primary_service
+
+    async def prepare_session(self, trade_date: str, exchange=None) -> int:
+        if self._session_date == trade_date and self._state_loaded and self._watch:
+            return len(self._watch)
+        if self._restored_date != trade_date:
+            await self._restore_state(trade_date)
+            self._restored_date = trade_date
+        if self._primary_service._session_date != trade_date:
+            return 0
+        self._session_date = trade_date
+        self._watch = deepcopy(self._primary_service._watch)
+        self._persist_state()
+        return len(self._watch)

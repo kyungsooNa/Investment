@@ -63,6 +63,7 @@ class OverseasOrderExecutionService:
         logger: Optional[logging.Logger] = None,
         paper_account_orders: bool = False,
         is_paper_trading_provider: Optional[Callable[[], bool]] = None,
+        paper_signal_source: str = SIGNAL_SOURCE_PAPER,
     ) -> None:
         # broker 는 live_enabled=True 일 때만 필요. paper 모드에선 None 허용(구조적 잠금).
         self._broker = broker
@@ -85,6 +86,7 @@ class OverseasOrderExecutionService:
         # live 실주문 직전 차단 게이트(check_orders_allowed). paper 모드는 실주문이 없어 미적용.
         self._kill_switch = kill_switch
         self._paper_account_orders = bool(paper_account_orders)
+        self._paper_signal_source = paper_signal_source
         self._is_paper_trading_provider = is_paper_trading_provider
         self._logger = logger or logging.getLogger(__name__)
 
@@ -103,7 +105,7 @@ class OverseasOrderExecutionService:
     def _source(self, paper_account: bool) -> str:
         if self._live_enabled:
             return self.SIGNAL_SOURCE_LIVE
-        return self.SIGNAL_SOURCE_PAPER_ACCOUNT if paper_account else self.SIGNAL_SOURCE_PAPER
+        return self.SIGNAL_SOURCE_PAPER_ACCOUNT if paper_account else self._paper_signal_source
 
     async def place_entry(
         self,
@@ -228,7 +230,7 @@ class OverseasOrderExecutionService:
         self, symbol: str, ex: OverseasExchange, side: str, qty: int,
         limit_str: str, exit_reason: Optional[str],
     ) -> ResCommonResponse:
-        raw: Dict[str, Any] = {"would_be": True, "signal_source": self.SIGNAL_SOURCE_PAPER}
+        raw: Dict[str, Any] = {"would_be": True, "signal_source": self._paper_signal_source}
         if exit_reason:
             raw["exit_reason"] = exit_reason
         report = OverseasOrderReport(

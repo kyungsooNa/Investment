@@ -55,6 +55,7 @@ from task.background.intraday.overseas_favorite_price_alert_task import Overseas
 from task.background.intraday.overseas_intraday_task import OverseasIntradayTask
 from task.background.intraday.us_market_timing_daily_update_task import USMarketTimingDailyUpdateTask
 from view.web.bootstrap.overseas_growth_strategy_bootstrap import OverseasGrowthStrategyBootstrap
+from view.web.bootstrap.overseas_rsi2_shadow_bootstrap import build_rsi2_shadow
 
 if TYPE_CHECKING:  # pragma: no cover
     from view.web.web_app_initializer import WebAppContext
@@ -510,6 +511,11 @@ class OverseasBootstrap:
             )
             services.append(ctx.overseas_intraday_rsi2_service)
 
+            rsi2_shadow = build_rsi2_shadow(
+                ctx, rsi2_cfg, ctx.overseas_intraday_rsi2_service,
+                common, us_calendar, paper_journal,
+            )
+
         bgu_cfg = getattr(overseas_stock_cfg, "intraday_buyable_gap_up", None)
         if getattr(bgu_cfg, "enabled", False):
             ctx.overseas_intraday_bgu_service = OverseasIntradayBuyableGapUpService(
@@ -536,7 +542,7 @@ class OverseasBootstrap:
             logger=ctx.logger,
         )
         ctx.overseas_intraday_task = OverseasIntradayTask(
-            strategy_services=services,
+            strategy_services=[*services, rsi2_shadow] if getattr(rsi2_cfg, "enabled", False) else services,
             broker=ctx.broker,
             market_clock=intraday_us_clock,
             us_market_calendar_service=us_calendar,
