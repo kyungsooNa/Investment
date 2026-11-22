@@ -1284,9 +1284,12 @@ def test_intraday_strategies_share_a_single_polling_task(patched_service_contain
 
     task = ctx.overseas_intraday_task
     assert task is not None
-    assert len(task._strategies) == 7
-    # 주문 서비스와 paper 저널도 전 전략이 공유한다
-    assert len({id(s._orders) for s in task._strategies}) == 1
+    assert len(task._strategies) == 8
+    # 7개 운영 전략은 주문 서비스를 공유하고 RSI2 관찰 경로는 독립된 저널 출처를 쓴다.
+    assert len({id(s._orders) for s in task._strategies[:-1]}) == 1
+    assert task._strategies[-1]._orders is not task._strategies[-2]._orders
+    assert task._strategies[-1]._orders._broker is None
+    assert task._strategies[-1]._orders._ledger is None
 
 
 def test_each_intraday_strategy_is_opt_in(patched_service_container_deps):
@@ -1305,7 +1308,8 @@ def test_each_intraday_strategy_is_opt_in(patched_service_container_deps):
     assert ctx.overseas_intraday_rsi2_service is not None
     assert ctx.overseas_intraday_vbo_service is None
     assert ctx.overseas_intraday_cb_service is None
-    assert len(ctx.overseas_intraday_task._strategies) == 1
+    assert len(ctx.overseas_intraday_task._strategies) == 2
+    assert ctx.overseas_intraday_task._strategies[1]._primary_service is ctx.overseas_intraday_rsi2_service
 
 
 def test_minervini_stage2_intraday_strategy_is_opt_in_and_order_locked(

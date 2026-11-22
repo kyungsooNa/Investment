@@ -45,8 +45,9 @@ MODULE_BUDGETS = {
     "heartbeat_bootstrap.py": (30, 1),
     "index_flow_bootstrap.py": (40, 2),
     "market_data_bootstrap.py": (170, 8),
-    "overseas_bootstrap.py": (560, 33),
+    "overseas_bootstrap.py": (565, 33),
     "overseas_growth_strategy_bootstrap.py": (80, 3),
+    "overseas_rsi2_shadow_bootstrap.py": (40, 2),
     "premarket_direction_bootstrap.py": (45, 3),  # 2026-11-20: 장마감 채점 태스크 +1 import
     "query_bootstrap.py": (205, 9),
     "realtime_bootstrap.py": (200, 10),

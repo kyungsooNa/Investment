@@ -14,14 +14,64 @@ import pytest
 import pytz
 
 from common.types import ErrorCode, ResCommonResponse
-from services.overseas_intraday_rsi2_service import OverseasIntradayRSI2Service
+from common.overseas_types import OverseasExchange
+from services.overseas_intraday_rsi2_service import OverseasIntradayRSI2Service, OverseasIntradayRSI2ShadowService
 from services.us_market_calendar_service import USMarketCalendarService
 
 NY = pytz.timezone("America/New_York")
 
 
+@pytest.mark.asyncio
+async def test_shadow_uses_primary_watch_but_separate_positions_and_skips_regime(tmp_path):
+    primary = _svc(tmp_path / "primary.json", now=_at(20, 15, 50)).service
+    primary._session_date = "20261120"
+    primary._watch = {"MSFT": {"closes": [90.0] * 200 + [110.0, 100.0], "exchange": OverseasExchange.NASD}}
+    regime = MagicMock()
+    regime.classify = AsyncMock()
+    shadow_orders = MagicMock()
+    shadow_orders.place_entry = AsyncMock(return_value=_ok({"would_be": True}))
+    shadow_orders.place_exit = AsyncMock(return_value=_ok({"would_be": True}))
+    shadow = OverseasIntradayRSI2ShadowService(
+        primary_service=primary,
+        candidate_service=primary._candidate_service,
+        stock_query_service=primary._sqs,
+        order_execution_service=shadow_orders,
+        market_clock=primary._clock,
+        market_regime_service=regime,
+        state_file=str(tmp_path / "shadow.json"),
+    )
+    assert await shadow.prepare_session("20261120") == 1
+    assert shadow._watch == primary._watch
+    assert shadow._watch is not primary._watch
+    assert await shadow._is_regime_ok("MSFT") is True
+    regime.classify.assert_not_awaited()
+    assert shadow._state_file != primary._state_file
+    assert (await shadow.on_price("MSFT", 99.0))["action"] == "BUY"
+    shadow_orders.place_entry.assert_awaited_once()
+    assert (await shadow.on_price("MSFT", 93.0))["action"] == "SELL"
+    shadow_orders.place_exit.assert_awaited_once()
+    assert primary._positions == {}
+
+
 def _ok(data):
     return ResCommonResponse(rt_cd=ErrorCode.SUCCESS.value, msg1="ok", data=data)
+
+
+@pytest.mark.asyncio
+async def test_shadow_retries_when_primary_watch_appears_after_open(tmp_path):
+    primary = _svc(tmp_path / "primary.json", now=_at(20, 10, 0)).service
+    primary._session_date = "20261120"
+    shadow = OverseasIntradayRSI2ShadowService(
+        primary_service=primary,
+        candidate_service=primary._candidate_service,
+        stock_query_service=primary._sqs,
+        order_execution_service=primary._orders,
+        state_file=str(tmp_path / "shadow.json"),
+    )
+    assert await shadow.prepare_session("20261120") == 0
+    primary._watch = {"MSFT": {"closes": [90.0] * 202, "exchange": OverseasExchange.NASD}}
+    assert await shadow.prepare_session("20261120") == 1
+    assert shadow.watch_codes() == ["MSFT"]
 
 
 def _write_state(path, *, session_date, entry_date, entry=100.0, stop=95.0, peak=None):

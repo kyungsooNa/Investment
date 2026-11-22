@@ -64,6 +64,18 @@ async def test_paper_mode_works_without_broker():
     assert resp.data.qty == 6
 
 
+@pytest.mark.asyncio
+async def test_shadow_source_only_records_to_separate_journal():
+    journal = MagicMock()
+    svc = OverseasOrderExecutionService(
+        None, live_enabled=False, journal=journal,
+        paper_signal_source="overseas_rsi2_no_regime_paper",
+    )
+    resp = await svc.place_entry(code="AAPL", qty=2, limit_price=150.0)
+    assert resp.data.raw["signal_source"] == "overseas_rsi2_no_regime_paper"
+    assert journal.record.call_args.kwargs["signal_source"] == "overseas_rsi2_no_regime_paper"
+
+
 # ── live_enabled=True: 실호출 ─────────────────────────────────────────────────
 
 @pytest.mark.asyncio
