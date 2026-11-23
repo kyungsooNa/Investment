@@ -1,4 +1,4 @@
-"""장전 종가 방향 예측(정보 표시 전용, 매매 게이트 미연결) 서비스 + 장전 알림·장마감 채점 태스크 조립."""
+"""장전 양·음봉/전일 대비 방향 예측 서비스와 알림·장마감 채점 태스크 조립."""
 from __future__ import annotations
 
 from services.premarket_direction_service import DailyHistoryFetcher, PremarketDirectionService

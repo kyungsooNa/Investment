@@ -1,4 +1,4 @@
-"""장 마감 후 장전 종가 방향 예측을 확정 종가로 채점하고 결과·누적 성적을 알린다."""
+"""장 마감 후 양·음봉 및 전일 대비 종가 방향 예측을 각각 채점해 알린다."""
 from __future__ import annotations
 
 from task.background.after_market.after_market_task_base import AfterMarketTask

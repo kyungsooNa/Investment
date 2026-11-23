@@ -1,13 +1,14 @@
-"""장전 종가 방향 예측 (정보 표시 전용 — 매매 게이트에 연결하지 않는다).
+"""장전 양·음봉 및 전일 대비 종가 방향 예측 (정보 표시 전용 — 매매 게이트에 연결하지 않는다).
 
 밤사이 미국장·VIX·환율 지표로 오늘 코스피·코스닥·SK하이닉스가 전일 종가보다 높게
-마감(B)할 확률을 로지스틱 회귀로 추정한다. 지표 선정 근거:
+마감(B)할 확률과 시가보다 높게 마감(C, 양봉)할 확률을 각각 로지스틱 회귀로 추정한다.
+지표 선정 근거:
 `scripts/run_premarket_direction_backtest.py` (2021-10~2026-11 표본외, 매일 재학습)
 — 코스피 65.3%(기준선 54.2%, 확신일 72.0%), 코스닥 61.1%(52.4%, 67.4%),
 하이닉스(+마이크론) 64.7%(50.2%, 70.8%).
 
-주의: 예측력의 대부분은 시가 갭에서 나온다(시가→종가 방향은 적중 ~50%). 오늘 지수가
-어느 쪽으로 끝날지 가늠하는 정보이지, 장 시작 후 진입 근거가 아니다.
+주의: 전일 대비 방향 예측력의 대부분은 시가 갭에서 나온다. 양·음봉 예측은 장중 방향을
+나타내지만 과거 적중률이 약 50%로 낮으므로 별도 확률·적중률로 표시한다.
 
 정렬 규칙(미래참조 방지): 한국 거래일 D 의 특징값은 미국 세션 날짜 T < D 인 종가만 쓴다.
 미국 T 세션은 KST 로 T+1 새벽에 마감하므로 D 장 시작 전에 확정된다. 값은
@@ -170,8 +171,18 @@ def actual_changes(rows: Sequence[dict], before: str) -> Dict[str, float]:
             for i in range(1, len(rows)) if rows[i]["date"] < before}
 
 
+def actual_body_changes(rows: Sequence[dict], before: str) -> Dict[str, float]:
+    """일봉 → {날짜: 종가/시가-1}, before 미만 날짜만."""
+    return {row["date"]: row["close"] / row["open"] - 1.0
+            for row in rows if row["date"] < before and row.get("open")}
+
+
 def _is_hit(probability: float, actual_change: float) -> bool:
     return (probability > 0.5) == (actual_change > 0)
+
+
+def _is_body_hit(probability: float, actual_change: float) -> bool:
+    return actual_change != 0 and _is_hit(probability, actual_change)
 
 
 def describe(probability: float) -> str:
@@ -181,20 +192,63 @@ def describe(probability: float) -> str:
     return f"▼ 하락 마감 {(1 - probability) * 100:.0f}%"
 
 
+def describe_body(probability: float) -> str:
+    if probability >= 0.5:
+        return f"양봉 {probability * 100:.0f}%"
+    return f"음봉 {(1 - probability) * 100:.0f}%"
+
+
+def _body_outlook(probability: float) -> str:
+    if probability >= UP_THRESHOLD:
+        return "양봉 우세"
+    if probability <= DOWN_THRESHOLD:
+        return "음봉 우세"
+    return "중립"
+
+
+def _summarize_metric(
+    history: Dict[str, dict],
+    code: str,
+    *,
+    probability_key: str,
+    actual_key: str,
+    window: Optional[int],
+    hit_fn=_is_hit,
+) -> Dict[str, int]:
+    records = [
+        history[d][code] for d in sorted(history, reverse=True)
+        if code in history[d]
+        and history[d][code].get(probability_key) is not None
+        and history[d][code].get(actual_key) is not None
+    ][:window]
+    confident = [
+        r for r in records
+        if r[probability_key] >= UP_THRESHOLD or r[probability_key] <= DOWN_THRESHOLD
+    ]
+    return {
+        "n": len(records),
+        "hits": sum(hit_fn(r[probability_key], r[actual_key]) for r in records),
+        "confident_n": len(confident),
+        "confident_hits": sum(hit_fn(r[probability_key], r[actual_key]) for r in confident),
+    }
+
+
 def summarize_track(history: Dict[str, dict], code: str,
                     window: Optional[int] = TRACK_WINDOW) -> Dict[str, int]:
     """실제 종가가 확정된 최근 window 일(None 이면 전체)의 적중 수 (확신 = 확률 ≥UP 또는 ≤DOWN 인 날)."""
-    records = [
-        history[d][code] for d in sorted(history, reverse=True)
-        if code in history[d] and history[d][code].get("actual_change") is not None
-    ][:window]
-    confident = [r for r in records if r["probability"] >= UP_THRESHOLD or r["probability"] <= DOWN_THRESHOLD]
-    return {
-        "n": len(records),
-        "hits": sum(_is_hit(r["probability"], r["actual_change"]) for r in records),
-        "confident_n": len(confident),
-        "confident_hits": sum(_is_hit(r["probability"], r["actual_change"]) for r in confident),
-    }
+    return _summarize_metric(
+        history, code, probability_key="probability", actual_key="actual_change",
+        window=window,
+    )
+
+
+def summarize_body_track(history: Dict[str, dict], code: str,
+                         window: Optional[int] = TRACK_WINDOW) -> Dict[str, int]:
+    """실제 양·음봉이 확정된 최근 window 일의 별도 적중 수."""
+    return _summarize_metric(
+        history, code, probability_key="body_probability", actual_key="actual_body_change",
+        window=window, hit_fn=_is_body_hit,
+    )
 
 
 def _describe_error(exc: Exception) -> str:
@@ -241,7 +295,7 @@ class DailyHistoryFetcher:
 
 
 class PremarketDirectionService:
-    """장전 1회 코스피·코스닥·SK하이닉스 상승 마감(종가>전일종가) 확률을 계산·보관·알림한다."""
+    """장전 1회 양·음봉과 전일 대비 종가 방향 확률을 각각 계산·보관·알림한다."""
 
     def __init__(
         self,
@@ -281,7 +335,7 @@ class PremarketDirectionService:
             result = await self._compute(today)
         except Exception as exc:
             result = {"ok": False, "date": today, "error": _describe_error(exc)}
-            self._logger.warning("장전 종가 방향 예측 실패: %s", result["error"])
+            self._logger.warning("장전 양음봉·종가 방향 예측 실패: %s", result["error"])
         self._latest = result
         if notify and result["ok"] and self._notification_service is not None:
             await self._notify(result)
@@ -294,7 +348,7 @@ class PremarketDirectionService:
         if empty:
             raise ValueError(f"시세 수신 실패: {', '.join(empty)}")
 
-        targets, feats, base_date, actuals = [], {}, None, {}
+        targets, feats, base_date, actuals, body_actuals = [], {}, None, {}, {}
         for target in TARGETS:
             rows = await self._fetcher.fetch_kr_index(target.code, self._history_count)
             kr = [r for r in rows if r["date"] < today]
@@ -305,8 +359,9 @@ class PremarketDirectionService:
             targets.append({"code": target.code, "name": target.name, **prediction})
             feats.update(target_feats)
             actuals[target.code] = actual_changes(rows, before=today)
+            body_actuals[target.code] = actual_body_changes(rows, before=today)
             base_date = base_date or kr[-1]["date"]
-        self._track(today, targets, actuals)
+        self._track(today, targets, actuals, body_actuals)
         return {
             "ok": True,
             "date": today,
@@ -315,20 +370,35 @@ class PremarketDirectionService:
             "features": [{"name": f.name, "label": f.label, "value": feats[f.name]} for f in specs],
         }
 
-    def _track(self, today: str, targets: List[dict], actuals: Dict[str, Dict[str, float]]) -> None:
-        """오늘 예측을 기록하고 지난 예측의 실제 종가 등락을 채운 뒤, 대상별 적중 요약을 붙인다."""
+    def _track(
+        self,
+        today: str,
+        targets: List[dict],
+        actuals: Dict[str, Dict[str, float]],
+        body_actuals: Dict[str, Dict[str, float]],
+    ) -> None:
+        """오늘 두 예측을 기록하고 지난 예측의 실제 결과와 별도 적중 요약을 붙인다."""
         history = self._load_history()
         for date, record in history.items():
             for code, entry in record.items():
                 if entry.get("actual_change") is None and date in actuals.get(code, {}):
                     entry["actual_change"] = actuals[code][date]
+                if (entry.get("body_probability") is not None
+                        and entry.get("actual_body_change") is None
+                        and date in body_actuals.get(code, {})):
+                    entry["actual_body_change"] = body_actuals[code][date]
         today_record = history.setdefault(today, {})
         for t in targets:
-            today_record.setdefault(t["code"], {"actual_change": None})["probability"] = t["probability"]
+            entry = today_record.setdefault(
+                t["code"], {"actual_change": None, "actual_body_change": None},
+            )
+            entry["probability"] = t["probability"]
+            entry["body_probability"] = t["body_probability"]
         self._save_history(history)
 
         for t in targets:
             t["track"] = summarize_track(history, t["code"])
+            t["body_track"] = summarize_body_track(history, t["code"])
             past = [d for d in sorted(history, reverse=True)
                     if d < today and history[d].get(t["code"], {}).get("actual_change") is not None]
             t["previous"] = {"date": past[0], **history[past[0]][t["code"]]} if past else None
@@ -356,15 +426,27 @@ class PremarketDirectionService:
         train = [r for r in build_dataset(kr, us) if all(r.get(n) is not None for n in names)]
         if len(train) < self._min_train_days:
             raise ValueError(f"학습 데이터 부족: {len(train)}일 < {self._min_train_days}일")
-        mu, sd, w, b = _fit_logit([[r[n] for n in names] for r in train], [r["up_close"] for r in train])
-
         feats = build_forecast_features(us, prev_date=kr[-1]["date"], date=today)
         missing = [n for n in names if feats.get(n) is None]
         if missing:
             raise ValueError(f"오늘 지표 누락: {', '.join(missing)}")
-        z = [(feats[n] - mu[i]) / sd[i] for i, n in enumerate(names)]
-        probability = 1.0 / (1.0 + math.exp(-(sum(w[i] * z[i] for i in range(len(names))) + b)))
-        prediction = {"probability": probability, "outlook": _outlook(probability), "train_days": len(train)}
+
+        def predict(label: str) -> float:
+            mu, sd, w, b = _fit_logit(
+                [[r[n] for n in names] for r in train], [r[label] for r in train],
+            )
+            z = [(feats[n] - mu[i]) / sd[i] for i, n in enumerate(names)]
+            return 1.0 / (1.0 + math.exp(-(sum(w[i] * z[i] for i in range(len(names))) + b)))
+
+        probability = predict("up_close")
+        body_probability = predict("up_body")
+        prediction = {
+            "probability": probability,
+            "outlook": _outlook(probability),
+            "body_probability": body_probability,
+            "body_outlook": _body_outlook(body_probability),
+            "train_days": len(train),
+        }
         return prediction, feats
 
     async def report_close(self, date: str, notify: bool = True) -> dict:
@@ -391,51 +473,97 @@ class PremarketDirectionService:
         for code, entry in record.items():
             rows = await self._fetcher.fetch_kr_index(code, 30)
             actual = actual_changes(rows, before=until)
+            body_actual = actual_body_changes(rows, before=until)
             for d, rec in history.items():
                 if code in rec and rec[code].get("actual_change") is None and d in actual:
                     rec[code]["actual_change"] = actual[d]
+                if (code in rec and rec[code].get("body_probability") is not None
+                        and rec[code].get("actual_body_change") is None and d in body_actual):
+                    rec[code]["actual_body_change"] = body_actual[d]
             if entry.get("actual_change") is None:
+                pending.append(code)
+            if entry.get("body_probability") is not None and entry.get("actual_body_change") is None:
                 pending.append(code)
         self._save_history(history)
         if pending:
-            raise ValueError(f"확정 종가 미수신: {', '.join(pending)}")
-        targets = [
-            {"code": code, "name": names.get(code, code), "probability": entry["probability"],
-             "actual_change": entry["actual_change"], "hit": _is_hit(entry["probability"], entry["actual_change"]),
-             "track": summarize_track(history, code), "total": summarize_track(history, code, window=None)}
-            for code, entry in record.items()
-        ]
+            raise ValueError(f"확정 종가 미수신: {', '.join(dict.fromkeys(pending))}")
+        targets = []
+        for code, entry in record.items():
+            direction_hit = _is_hit(entry["probability"], entry["actual_change"])
+            target = {
+                "code": code,
+                "name": names.get(code, code),
+                "probability": entry["probability"],
+                "actual_change": entry["actual_change"],
+                "hit": direction_hit,  # 기존 소비자 호환
+                "direction_hit": direction_hit,
+                "track": summarize_track(history, code),
+                "total": summarize_track(history, code, window=None),
+            }
+            if entry.get("body_probability") is not None:
+                body_hit = _is_body_hit(entry["body_probability"], entry["actual_body_change"])
+                target.update({
+                    "body_probability": entry["body_probability"],
+                    "actual_body_change": entry["actual_body_change"],
+                    "body_hit": body_hit,
+                    "body_track": summarize_body_track(history, code),
+                    "body_total": summarize_body_track(history, code, window=None),
+                    "score": {"hits": int(direction_hit) + int(body_hit), "total": 2},
+                })
+            else:
+                target["score"] = {"hits": int(direction_hit), "total": 1}
+            targets.append(target)
         return {"ok": True, "date": date, "targets": targets}
 
     async def _notify_result(self, result: dict) -> None:
         def rate(t):
             return f"{t['hits']}/{t['n']}({t['hits'] / t['n'] * 100:.0f}%)" if t["n"] else "0/0"
 
-        lines = [
-            f"• {t['name']} {describe(t['probability'])} → 실제 {t['actual_change'] * 100:+.2f}% "
-            f"{'적중' if t['hit'] else '실패'}"
-            for t in result["targets"]
-        ]
+        lines = []
+        for t in result["targets"]:
+            if "body_probability" in t:
+                actual_body = "양봉" if t["actual_body_change"] > 0 else "음봉" if t["actual_body_change"] < 0 else "도지"
+                lines.append(
+                    f"• {t['name']} {describe_body(t['body_probability'])} → 실제 "
+                    f"{actual_body}({t['actual_body_change'] * 100:+.2f}%) "
+                    f"{'적중' if t['body_hit'] else '실패'}\n"
+                    f"  전일 대비 {describe(t['probability'])} → 실제 {t['actual_change'] * 100:+.2f}% "
+                    f"{'적중' if t['direction_hit'] else '실패'} — {t['score']['hits']}/{t['score']['total']}"
+                )
+            else:
+                lines.append(
+                    f"• {t['name']} 전일 대비 {describe(t['probability'])} → 실제 "
+                    f"{t['actual_change'] * 100:+.2f}% {'적중' if t['direction_hit'] else '실패'}"
+                )
         lines.append("• 누적: " + " · ".join(
-            f"{t['name']} 전체 {rate(t['total'])}, 최근 {TRACK_WINDOW}일 {rate(t['track'])}"
-            for t in result["targets"]
+            (
+                f"{t['name']} 양음봉 전체 {rate(t['body_total'])}, 전일방향 전체 {rate(t['total'])}"
+                if "body_total" in t else f"{t['name']} 전일방향 전체 {rate(t['total'])}"
+            ) for t in result["targets"]
         ))
-        hits = sum(t["hit"] for t in result["targets"])
+        hits = sum(t["score"]["hits"] for t in result["targets"])
+        total = sum(t["score"]["total"] for t in result["targets"])
         await self._notification_service.emit(
             category=NotificationCategory.STRATEGY,
             level=NotificationLevel.INFO,
-            title=f"장마감 종가 예측 결과 ({result['date']}) — {hits}/{len(result['targets'])} 적중",
+            title=f"장마감 양음봉·종가 예측 결과 ({result['date']}) — {hits}/{total} 적중",
             message="\n".join(lines),
             metadata={
                 "force_external": True,
                 "event": "premarket_direction_result",
-                "hits": {t["code"]: t["hit"] for t in result["targets"]},
+                "hits": {
+                    t["code"]: {
+                        "body": t.get("body_hit"),
+                        "direction": t["direction_hit"],
+                    } for t in result["targets"]
+                },
             },
         )
 
     async def _notify(self, result: dict) -> None:
         lines = [
-            f"• {t['name']} {describe(t['probability'])} ({t['outlook']})"
+            f"• {t['name']} {describe_body(t['body_probability'])} ({t['body_outlook']}) · "
+            f"전일 대비 {describe(t['probability'])} ({t['outlook']})"
             for t in result["targets"]
         ]
         moves = " · ".join(f"{f['label']} {f['value'] * 100:+.2f}%" for f in result["features"])
@@ -444,26 +572,36 @@ class PremarketDirectionService:
         if previous:
             prev_date = previous[0]["previous"]["date"]
             lines.append(f"• 전 거래일({prev_date}): " + " · ".join(
-                f"{t['name']} {describe(t['previous']['probability'])} → 실제 "
-                f"{t['previous']['actual_change'] * 100:+.2f}% "
-                f"{'적중' if _is_hit(t['previous']['probability'], t['previous']['actual_change']) else '실패'}"
+                (
+                    f"{t['name']} {describe_body(t['previous']['body_probability'])} → 실제 "
+                    f"{'양봉' if t['previous']['actual_body_change'] > 0 else '음봉'} "
+                    f"{'적중' if _is_body_hit(t['previous']['body_probability'], t['previous']['actual_body_change']) else '실패'} / "
+                    f"전일 대비 {describe(t['previous']['probability'])} → 실제 "
+                    f"{t['previous']['actual_change'] * 100:+.2f}% "
+                    f"{'적중' if _is_hit(t['previous']['probability'], t['previous']['actual_change']) else '실패'}"
+                    if t["previous"].get("body_probability") is not None
+                    and t["previous"].get("actual_body_change") is not None
+                    else f"{t['name']} {describe(t['previous']['probability'])} → 실제 "
+                    f"{t['previous']['actual_change'] * 100:+.2f}% "
+                    f"{'적중' if _is_hit(t['previous']['probability'], t['previous']['actual_change']) else '실패'}"
+                )
                 for t in previous
             ))
-        tracked = [t for t in result["targets"] if t.get("track", {}).get("n")]
+        tracked = [t for t in result["targets"] if t.get("track", {}).get("n") or t.get("body_track", {}).get("n")]
         if tracked:
             lines.append(f"• 최근 {TRACK_WINDOW}일 적중: " + " · ".join(
-                f"{t['name']} {t['track']['hits']}/{t['track']['n']} "
-                f"(확신 {t['track']['confident_hits']}/{t['track']['confident_n']})"
+                f"{t['name']} 양음봉 {t['body_track']['hits']}/{t['body_track']['n']} · "
+                f"전일방향 {t['track']['hits']}/{t['track']['n']}"
                 for t in tracked
             ))
         message = "\n".join(lines) + (
-            "\n※ 오늘 종가가 전일 종가보다 높게/낮게 끝날 확률(등락 폭 아님). "
-            "백테스트 적중 약 61~65%, 확신 구간 약 70% — 예측력 대부분은 시가 갭이라 장중 진입 근거 아님"
+            "\n※ 양음봉은 종가>시가, 전일방향은 종가>전일종가 기준. 각각 별도 모델·적중률이며 "
+            "양음봉 예측은 과거 약 50% 수준이라 단독 진입 근거 아님"
         )
         await self._notification_service.emit(
             category=NotificationCategory.STRATEGY,
             level=NotificationLevel.INFO,
-            title="장전 종가 방향 예측",
+            title="장전 양음봉·종가 방향 예측",
             message=message,
             metadata={
                 # 기본 route_levels 는 STRATEGY/info 를 외부로 보내지 않는다 — 마켓타이밍 알림처럼 강제 전송.

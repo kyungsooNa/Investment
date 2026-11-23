@@ -48,10 +48,14 @@ const PREMARKET_REPORT = {
     date: "2026-11-19",
     base_date: "2026-11-18",
     targets: [
-      { code: "KOSPI", name: "코스피", probability: 0.723, outlook: "상승 우세", train_days: 1450,
+      { code: "KOSPI", name: "코스피", probability: 0.723, outlook: "상승 우세",
+        body_probability: 0.58, body_outlook: "양봉 우세", train_days: 1450,
         track: { n: 20, hits: 15, confident_n: 12, confident_hits: 10 },
-        previous: { date: "2026-11-18", probability: 0.65, actual_change: 0.0045 } },
-      { code: "000660", name: "SK하이닉스", probability: 0.31, outlook: "하락 우세", train_days: 1450,
+        body_track: { n: 20, hits: 11, confident_n: 4, confident_hits: 2 },
+        previous: { date: "2026-11-18", probability: 0.65, actual_change: 0.0045,
+          body_probability: 0.4, actual_body_change: -0.003 } },
+      { code: "000660", name: "SK하이닉스", probability: 0.31, outlook: "하락 우세",
+        body_probability: 0.44, body_outlook: "음봉 우세", train_days: 1450,
         track: { n: 0, hits: 0, confident_n: 0, confident_hits: 0 }, previous: null },
     ],
     features: [
@@ -173,21 +177,25 @@ test("주도 테마 데이터가 없으면 안내 문구 표시", async () => {
   assert(box.textContent.includes("수집 중"), "빈 데이터 안내 누락");
 });
 
-test("장전 종가 방향 확률을 우세한 쪽 기준으로 대상별 표시", async () => {
+test("장전 양음봉과 전일 대비 방향 확률을 각각 대상별 표시", async () => {
   const window = await makeWindow();
   const box = window.document.getElementById("premarket-direction");
   assert(window.__fetched.includes("/api/market/premarket-direction"), "장전 예측 API 미호출");
   const rows = box.querySelectorAll(".premarket-direction-head");
   assert(rows.length === 2, `대상 수 불일치: ${rows.length}`);
-  assert(rows[0].textContent.includes("코스피") && rows[0].textContent.includes("▲ 상승 마감 72%"), "코스피 확률 누락");
+  assert(rows[0].textContent.includes("코스피") && rows[0].textContent.includes("양봉 58%"), "코스피 양봉 확률 누락");
+  assert(rows[0].textContent.indexOf("양봉 58%") < rows[0].textContent.indexOf("▲ 상승 마감 72%"), "양음봉이 주지표가 아님");
+  assert(rows[0].textContent.includes("전일 대비 ▲ 상승 마감 72%"), "코스피 전일 방향 확률 누락");
   assert(rows[0].textContent.includes("상승 우세"), "코스피 판정 누락");
   assert(rows[0].querySelector(".premarket-direction-prob.text-red") !== null, "상승 우세 색상 누락");
   // 31% 상승 = 69% 하락 — 낮은 확률을 '하락 폭'으로 오해하지 않게 우세한 쪽으로 표기
-  assert(rows[1].textContent.includes("SK하이닉스") && rows[1].textContent.includes("▼ 하락 마감 69%"), "하이닉스 확률 누락");
+  assert(rows[1].textContent.includes("SK하이닉스") && rows[1].textContent.includes("음봉 56%"), "하이닉스 음봉 확률 누락");
+  assert(rows[1].textContent.includes("전일 대비 ▼ 하락 마감 69%"), "하이닉스 전일 방향 확률 누락");
   assert(!rows[1].textContent.includes("31%"), "하락 우세인데 상승 확률로 표기");
   assert(rows[1].querySelector(".premarket-direction-prob.text-blue") !== null, "하락 우세 색상 누락");
-  assert(rows[0].textContent.includes("최근 20일 15/20"), "적중률 누락");
-  assert(rows[0].textContent.includes("전일 ▲ 상승 마감 65% → +0.45% 적중"), "전 거래일 결과 누락");
+  assert(rows[0].textContent.includes("양음봉 최근 20일 11/20"), "양음봉 적중률 누락");
+  assert(rows[0].textContent.includes("전일방향 최근 20일 15/20"), "전일방향 적중률 누락");
+  assert(rows[0].textContent.includes("전일 음봉 60% → 음봉 적중 / 전일 대비 ▲ 상승 마감 65% → +0.45% 적중"), "전 거래일 결과 누락");
   assert(rows[1].textContent.includes("기록 쌓는 중"), "기록 없음 안내 누락");
   assert(box.textContent.includes("S&P500") && box.textContent.includes("+1.23%"), "지표 등락 누락");
   assert(box.textContent.includes("-5.10%"), "음수 지표 누락");
