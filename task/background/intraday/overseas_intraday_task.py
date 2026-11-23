@@ -3,7 +3,8 @@
 
 미국은 웹소켓/분봉 경로가 없어 해외현재가 REST 폴링이 유일한 장중 틱 소스다
 (`OverseasFavoritePriceAlertTask` 와 동일 패턴). 정규장 동안 감시 종목을 폴링해
-주입된 전략 서비스들에 틱을 흘리고, 마감 직전에는 EOD 청산만 수행한다.
+주입된 전략 서비스들에 틱을 흘리고, 마감 직전에는 당일매매 전략을 청산하면서
+멀티데이 전략의 가격 평가는 계속한다.
 
 **여러 전략을 한 폴링 패스로 구동한다.** 전략마다 태스크를 두면 겹치는 심볼을
 전략 수만큼 중복 조회해 API 예산을 태운다(top_n=20 × 60초 × 6.5h = 전략당 7,800콜).
@@ -151,7 +152,9 @@ class OverseasIntradayTask(SchedulableTask):
             )
             return
 
-        if self._is_eod_window(now, today):
+        eod_window = self._is_eod_window(now, today)
+        active_strategies = self._strategies
+        if eod_window:
             if self._last_eod_date != today:
                 exits = 0
                 for svc in self._strategies:
@@ -161,21 +164,25 @@ class OverseasIntradayTask(SchedulableTask):
                 self._logger.info({"event": "overseas_intraday_eod_exit",
                                    "trade_date": today, "exits": exits})
                 self._flush_journal(today)
-            self._set_phase(
-                "eod", f"마감 {self._eod_exit_before_min}분 전 — 신규 진입 없이 EOD 청산 구간입니다.")
-            return
+            active_strategies = [svc for svc in self._strategies if not svc.EOD_EXIT]
+            if not active_strategies:
+                self._set_phase(
+                    "eod", f"마감 {self._eod_exit_before_min}분 전 — 신규 진입 없이 EOD 청산 구간입니다.")
+                return
 
         # 감시 심볼 합집합 → 심볼당 1회 조회 → 그 심볼을 보는 전략에만 fan-out
         watchers: dict[str, list] = {}
         self._set_phase("preparing", "장중 전략 후보와 세션 데이터를 준비 중입니다.")
-        for svc in self._strategies:
+        for svc in active_strategies:
             await self._safe(svc, svc.prepare_session(today), "prepare_session")
             for code in svc.watch_codes():
                 watchers.setdefault(code, []).append(svc)
 
         self._session_date = today
         self._watch_count = len(watchers)
-        if watchers:
+        if eod_window:
+            self._set_phase("eod", f"마감 전 멀티데이 전략 {len(watchers)}개 종목을 폴링 중입니다.")
+        elif watchers:
             self._set_phase("polling", f"감시 {len(watchers)}개 종목을 폴링 중입니다.")
         else:
             # 감시 0개는 "전략이 켜져 있는데 아무것도 하지 않는" 상태다. 후보 조회

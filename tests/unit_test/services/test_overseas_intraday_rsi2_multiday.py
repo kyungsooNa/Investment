@@ -1,9 +1,8 @@
 """해외 장중 RSI2 멀티데이 보유 테스트.
 
-RSI2 는 마감 15분 전부터 진입 판정을 하는데, 폴링 태스크는 마감 10분 전에 전 전략을
-EOD 청산한다 — 같은 날 최대 5분 보유로 끝나 장중 표본이 구조적으로 '0 − 비용' 이
-됐다. 엣지 근거(dry-run 멀티데이 재구성: hard stop / trailing 8% / time stop 20일)와
-같은 조건으로 검증하려면 장중 경로도 며칠 보유해야 한다.
+RSI2 는 마감 15분 전부터 진입 판정을 하고, EOD 청산 구간에도 가격 평가를 이어간다.
+엣지 근거(dry-run 멀티데이 재구성: hard stop / trailing 8% / time stop 20일)와
+같은 조건으로 검증하기 위해 장중 경로도 며칠 보유한다.
 """
 import json
 from datetime import datetime

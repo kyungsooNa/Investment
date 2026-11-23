@@ -1,7 +1,8 @@
 """해외 장중 VBO 폴링 태스크 테스트.
 
 미국 정규장에서만 동작하며(휴장/장외 no-op), 개장 후 준비 지연이 지나면 세션을
-준비하고 감시 종목을 폴링한다. 마감 임박에는 진입 대신 EOD 청산만 수행한다.
+준비하고 감시 종목을 폴링한다. 마감 임박에는 당일매매 전략을 청산하고
+멀티데이 전략의 폴링을 이어간다.
 """
 import asyncio
 
@@ -476,6 +477,33 @@ async def test_eod_closes_every_strategy():
     a.close_all.assert_awaited_once()
     b.close_all.assert_awaited_once()
     a.on_price.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_eod_continues_polling_multiday_strategy_only():
+    day_trade = _strategy("VBO", ["AAA"])
+    day_trade.EOD_EXIT = True
+    multiday = _strategy("RSI2", ["BBB"])
+    multiday.EOD_EXIT = False
+    t = _multi_task([day_trade, multiday], now=_ny(15, 55))
+
+    await t.task._tick()
+
+    day_trade.close_all.assert_awaited_once_with(reason="eod")
+    day_trade.on_price.assert_not_awaited()
+    multiday.on_price.assert_awaited_once_with("BBB", 106.0, volume=900_000.0)
+
+
+@pytest.mark.asyncio
+async def test_early_close_continues_polling_multiday_strategy():
+    multiday = _strategy("RSI2", ["BBB"])
+    multiday.EOD_EXIT = False
+    t = _multi_task([multiday], now=_ny(12, 55))
+    t.task._us_mcs.get_close_time_str.return_value = "13:00"
+
+    await t.task._tick()
+
+    multiday.on_price.assert_awaited_once_with("BBB", 106.0, volume=900_000.0)
 
 
 def test_progress_reports_wired_strategies():
