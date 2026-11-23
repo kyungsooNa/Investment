@@ -5,6 +5,7 @@ let allSchedulerHistory = [];
 let currentSchedulerFilter = '전체';
 let schedulerEventSource = null;
 let schedulerStatusInFlight = false;
+let overseasIntradayProgress = null;
 
 /** 페이지가 담당하는 시장. 상단 탭(한국장/미국장)별로 페이지가 분리되어 있다. */
 function schedulerMarket() {
@@ -88,6 +89,10 @@ function renderSchedulerStatus(data) {
 
     const schedulers = [data];
     const marketTasks = data.market_tasks || [];
+    overseasIntradayProgress = data.market === 'overseas_us'
+        ? (marketTasks.find(task => task.name === 'overseas_intraday'
+            && isMarketTaskArmed(task))?.progress || null)
+        : null;
 
     const badgeState = schedulerBadgeState(data);
     badge.textContent = badgeState.text;
@@ -113,6 +118,10 @@ function renderSchedulerStatus(data) {
 // 섹션 헤더가 서로 다른 판정을 쓰면 한쪽만 `정지` 로 남아 멈춘 것처럼 읽힌다.
 function schedulerBadgeState(section) {
     const tasks = section.market_tasks || [];
+    if (tasks.some(task => task.name === 'overseas_intraday' && isMarketTaskArmed(task)
+        && task.progress?.phase === 'preparing')) {
+        return { text: '전략 준비 중', className: 'badge paper' };
+    }
     if (section.running) {
         return { text: '실행 중', className: 'badge open' };
     }
@@ -136,6 +145,13 @@ function isMarketTaskArmed(task) {
 
 function marketTaskSummary(tasks, armed) {
     if (!tasks || tasks.length === 0) return '시장 태스크 없음';
+    const preparing = tasks.find(task => task.name === 'overseas_intraday'
+        && isMarketTaskArmed(task)
+        && task.progress?.phase === 'preparing');
+    if (preparing) {
+        const progress = preparing.progress;
+        return `장중 전략 준비 중 ${progress.prepared_strategies ?? 0}/${progress.total_strategies ?? progress.strategies?.length ?? '?'} · 시장 태스크 ${armed}/${tasks.length} 가동`;
+    }
     if (armed === 0) return `시장 태스크 0/${tasks.length} 미기동`;
     if (armed < tasks.length) {
         return `시장 태스크 ${armed}/${tasks.length} 가동 · ${tasks.length - armed}개 미기동`;
@@ -250,7 +266,10 @@ function renderMarketTasks(tasks) {
     marketTasksDiv.innerHTML = tasks.map(task => {
         const running = task.running || task.state === 'running';
         const armed = isMarketTaskArmed(task);
-        const stateBadge = running
+        const progress = task.progress || {};
+        const stateBadge = armed && progress.phase === 'preparing'
+            ? '<span class="badge paper">전략 준비 중</span>'
+            : running
             ? '<span class="badge open">현재 처리 중</span>'
             : (armed
                 ? '<span class="badge open">정상 가동</span>'
@@ -258,7 +277,6 @@ function renderMarketTasks(tasks) {
         const modeBadge = task.live_trading
             ? '<span class="badge closed">실주문</span>'
             : '<span class="badge paper">관찰/Paper</span>';
-        const progress = task.progress || {};
         const watchCount = progress.watch_count ?? progress.watch ?? progress.candidates;
         const phaseLabels = {
             init: '초기화 중',
@@ -271,9 +289,11 @@ function renderMarketTasks(tasks) {
         };
         const phaseLabel = phaseLabels[progress.phase]
             || (armed ? '예약·주기 실행 중' : '미기동');
-        const progressText = watchCount != null
-            ? `${phaseLabel} · 감시 ${Number(watchCount).toLocaleString()}개`
-            : phaseLabel;
+        const progressText = progress.phase === 'preparing'
+            ? `후보 준비 중 · 전략 ${progress.prepared_strategies ?? 0}/${progress.total_strategies ?? progress.strategies?.length ?? '?'}개 처리`
+            : (watchCount != null
+                ? `${phaseLabel} · 감시 ${Number(watchCount).toLocaleString()}개`
+                : phaseLabel);
         // 태스크는 폴링 사이에 대부분 idle 로 돌아온다 — 상태값만으로는 장 마감·휴장·
         // 감시목록 0개가 전부 똑같이 보이므로, 마지막 패스가 무엇을 했는지 함께 적는다.
         const phaseDetail = progress.phase_detail
@@ -410,7 +430,16 @@ function renderSchedulerHistory(history) {
     ensureTableInCard(tbody.closest('table'));
 
     if (!history || history.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:15px;">실행 이력이 없습니다.</td></tr>';
+        let emptyMessage = '실행 이력이 없습니다.';
+        if (overseasIntradayProgress?.phase === 'preparing') {
+            emptyMessage = '후보를 준비 중입니다. 준비가 끝나면 종목 감시가 시작되고, 매매 조건을 충족한 신호가 여기에 표시됩니다.';
+        } else if (overseasIntradayProgress?.phase === 'polling') {
+            const count = Number(overseasIntradayProgress.watch_count || 0);
+            emptyMessage = count > 0
+                ? `${count}개 종목 감시 중입니다. 아직 매매 조건을 충족한 신호가 없습니다.`
+                : '현재 감시할 종목이 없습니다. 후보 데이터와 전략 조건을 확인 중입니다.';
+        }
+        tbody.innerHTML = `<tr><td colspan="8" style="text-align:center;padding:15px;">${emptyMessage}</td></tr>`;
         const ctrl = document.getElementById('scheduler-history-pagination');
         if (ctrl) ctrl.innerHTML = '';
         return;
