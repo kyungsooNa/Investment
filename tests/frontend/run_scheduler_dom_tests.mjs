@@ -99,6 +99,61 @@ test("한국장 일반 스케줄러는 기존 제어 버튼을 유지한다", as
     "한국장 StrategyScheduler는 정지 버튼을 유지해야 함");
 });
 
+test("미국장 후보 준비 중에는 진행 수와 신호가 없는 이유를 보여준다", async () => {
+  const window = makeWindow();
+  window.renderSchedulerStatus({
+    market: "overseas_us",
+    market_label: "미국장",
+    running: false,
+    has_scheduler: false,
+    scheduler_kind: "market_tasks",
+    can_control_scheduler: false,
+    status_note: "미국장은 백그라운드 전략 태스크 상태만 표시합니다. 실주문 자동매매는 잠금 상태입니다.",
+    strategies: [],
+    market_tasks: [{
+      name: "overseas_intraday",
+      display_name: "미국장 장중 전략",
+      market: "overseas_us",
+      state: "running",
+      running: true,
+      armed: true,
+      live_trading: false,
+      progress: {
+        phase: "preparing", prepared_strategies: 3, total_strategies: 7,
+        preparing_strategy: "RSI2Pullback_overseas_intraday",
+      },
+    }],
+  });
+  window.renderSchedulerHistory([]);
+
+  const card = window.document.getElementById("scheduler-market-tasks").textContent;
+  const history = window.document.getElementById("scheduler-history-body").textContent;
+  assert(card.includes("전략 준비 중"), `준비 단계를 카드에 표시해야 함 (실제 "${card}")`);
+  assert(card.includes("3/7"), `준비 진행 수를 표시해야 함 (실제 "${card}")`);
+  assert(history.includes("후보를 준비 중"), `빈 이력의 이유를 설명해야 함 (실제 "${history}")`);
+});
+
+test("미국장 감시 중 신호가 없으면 매매 조건 미충족을 설명한다", async () => {
+  const window = makeWindow();
+  window.renderSchedulerStatus({
+    market: "overseas_us",
+    running: false,
+    has_scheduler: false,
+    scheduler_kind: "market_tasks",
+    can_control_scheduler: false,
+    strategies: [],
+    market_tasks: [{
+      name: "overseas_intraday", state: "idle", running: false, armed: true,
+      live_trading: false, progress: { phase: "polling", watch_count: 23 },
+    }],
+  });
+  window.renderSchedulerHistory([]);
+
+  const history = window.document.getElementById("scheduler-history-body").textContent;
+  assert(history.includes("23개 종목"), `감시 종목 수를 설명해야 함 (실제 "${history}")`);
+  assert(history.includes("매매 조건"), `신호 없음과 정지를 구분해야 함 (실제 "${history}")`);
+});
+
 test("장중 태스크가 idle 이어도 마지막 폴링 패스의 사유를 보여준다", async () => {
   const window = makeWindow();
 

@@ -65,6 +65,9 @@ class OverseasIntradayTask(SchedulableTask):
         self._phase_detail = "아직 실행되지 않았습니다."
         self._watch_count: Optional[int] = None
         self._session_date: Optional[str] = None
+        self._prepared_strategies = 0
+        self._total_strategies = len(self._strategies)
+        self._preparing_strategy: Optional[str] = None
 
     @property
     def task_name(self) -> str:
@@ -86,6 +89,9 @@ class OverseasIntradayTask(SchedulableTask):
             "phase_detail": self._phase_detail,
             "watch_count": self._watch_count,
             "session_date": self._session_date,
+            "prepared_strategies": self._prepared_strategies,
+            "total_strategies": self._total_strategies,
+            "preparing_strategy": self._preparing_strategy,
             # 폴링 루프는 패스 사이에 IDLE 로 돌아오므로 `running` 만 보면 가동 중인
             # 태스크와 아예 기동되지 않은 태스크가 똑같이 보인다.
             "armed": self._task is not None and not self._task.done(),
@@ -172,12 +178,18 @@ class OverseasIntradayTask(SchedulableTask):
 
         # 감시 심볼 합집합 → 심볼당 1회 조회 → 그 심볼을 보는 전략에만 fan-out
         watchers: dict[str, list] = {}
-        self._set_phase("preparing", "장중 전략 후보와 세션 데이터를 준비 중입니다.")
+        self._prepared_strategies = 0
+        self._total_strategies = len(active_strategies)
+        self._preparing_strategy = None
+        self._set_phase("preparing", "오늘 감시할 후보 종목 데이터를 조회 중입니다. 완료되면 자동으로 감시를 시작합니다.")
         for svc in active_strategies:
+            self._preparing_strategy = getattr(svc, "STRATEGY_NAME", type(svc).__name__)
             await self._safe(svc, svc.prepare_session(today), "prepare_session")
+            self._prepared_strategies += 1
             for code in svc.watch_codes():
                 watchers.setdefault(code, []).append(svc)
 
+        self._preparing_strategy = None
         self._session_date = today
         self._watch_count = len(watchers)
         if eod_window:

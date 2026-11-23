@@ -124,6 +124,32 @@ async def test_tick_reports_preparing_phase_while_session_is_built():
     await t.task._tick()
 
 
+@pytest.mark.asyncio
+async def test_tick_reports_strategy_preparation_progress():
+    first = _strategy("VBO", ["AAA"])
+    second = _strategy("RSI2", ["BBB"])
+    t = _multi_task([first, second])
+    observed = []
+
+    async def prepare_first(_today):
+        observed.append(t.task.get_progress().copy())
+        return 1
+
+    async def prepare_second(_today):
+        observed.append(t.task.get_progress().copy())
+        return 1
+
+    first.prepare_session.side_effect = prepare_first
+    second.prepare_session.side_effect = prepare_second
+
+    await t.task._tick()
+
+    assert [(p["prepared_strategies"], p["total_strategies"], p["preparing_strategy"])
+            for p in observed] == [(0, 2, "VBO"), (1, 2, "RSI2")]
+    assert t.task.get_progress()["phase"] == "polling"
+    assert t.task.get_progress()["watch_count"] == 2
+
+
 def test_price_fetch_timeout_allows_for_shared_paper_api_queue():
     """VTS 해외시세는 초당 1건이라 관심종목과 공유할 때 5초 제한은 정상 요청도 끊는다."""
     assert OverseasIntradayTask.FETCH_TIMEOUT_SEC >= 15.0
