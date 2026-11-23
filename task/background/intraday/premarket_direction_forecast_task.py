@@ -1,4 +1,4 @@
-"""장전 종가 방향 예측 태스크.
+"""장전 양·음봉 및 전일 대비 종가 방향 예측 태스크.
 
 국내 `MarketTimingDailyUpdateTask` 의 실행 흐름(개장 30분 전 창에서 하루 1회, 거래일만)을
 상속하고 실행 본문만 `PremarketDirectionService.refresh(notify=True)` 로 바꾼다.
@@ -13,7 +13,7 @@ from task.background.intraday.market_timing_daily_update_task import MarketTimin
 
 
 class PremarketDirectionForecastTask(MarketTimingDailyUpdateTask):
-    """개장 전 코스피·코스닥·SK하이닉스 상승 마감 확률을 1회 계산하고 알림을 발행한다."""
+    """개장 전 코스피·코스닥·SK하이닉스의 양·음봉과 전일 대비 방향을 예측해 알린다."""
 
     def __init__(
         self,
