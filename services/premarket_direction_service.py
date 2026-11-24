@@ -561,7 +561,7 @@ class PremarketDirectionService:
         )
 
     async def _notify(self, result: dict) -> None:
-        lines = [f"오늘 예측 ({result['base_date']} 종가 기준)"]
+        lines = ["오늘 예측", f"기준: 양음봉은 당일 시가, 전일 대비는 {result['base_date']} 종가"]
         for t in result["targets"]:
             lines.append(
                 f"• {t['name']}\n"
