@@ -4,8 +4,8 @@
 마감(B)할 확률과 시가보다 높게 마감(C, 양봉)할 확률을 각각 로지스틱 회귀로 추정한다.
 지표 선정 근거:
 `scripts/run_premarket_direction_backtest.py` (2021-10~2026-11 표본외, 매일 재학습)
-— 코스피 65.3%(기준선 54.2%, 확신일 72.0%), 코스닥 61.1%(52.4%, 67.4%),
-하이닉스(+마이크론) 64.7%(50.2%, 70.8%).
+— 코스피 65.3%(기준선 54.2%, 확신일 72.0%), 코스닥 61.1%(52.4%, 67.4%).
+하이닉스 과거 성과는 일봉 원천 변경 후 재검증이 필요하다.
 
 주의: 전일 대비 방향 예측력의 대부분은 시가 갭에서 나온다. 양·음봉 예측은 장중 방향을
 나타내지만 과거 적중률이 약 50%로 낮으므로 별도 확률·적중률로 표시한다.
@@ -14,7 +14,7 @@
 미국 T 세션은 KST 로 T+1 새벽에 마감하므로 D 장 시작 전에 확정된다. 값은
 "한국 직전 거래일 이후 새로 확정된 미국 세션들의 누적 수익률"이다(한국 휴장 자동 처리).
 
-데이터: 국내 지수 = 네이버 fchart, 해외 = Yahoo Finance chart API.
+데이터: 국내 지수 = 네이버 fchart, SK하이닉스·해외 지표 = Yahoo Finance chart API.
 """
 from __future__ import annotations
 
@@ -66,7 +66,7 @@ class ForecastTarget:
     features: tuple[FeatureSpec, ...]
 
 
-# 하이닉스는 메모리 동종(마이크론)을 더하면 적중이 +3.8%p 오른다. 지수는 SOX 로 충분(효과 없음).
+# 하이닉스는 메모리 동종(마이크론) 지표를 추가한다. 지수는 SOX 로 충분하다.
 TARGETS: tuple[ForecastTarget, ...] = (
     ForecastTarget("KOSPI", "코스피", FORECAST_FEATURES),
     ForecastTarget("KOSDAQ", "코스닥", FORECAST_FEATURES),
@@ -88,16 +88,20 @@ def parse_naver_fchart(text: str) -> List[dict]:
     return rows
 
 
-def parse_yahoo_chart(text: str) -> List[dict]:
+def parse_yahoo_chart(text: str, *, include_open: bool = False) -> List[dict]:
     result = json.loads(text)["chart"]["result"][0]
     tz = timezone(timedelta(seconds=result["meta"].get("gmtoffset", 0)))
-    closes = result["indicators"]["quote"][0]["close"]
+    quote = result["indicators"]["quote"][0]
+    closes = quote["close"]
+    opens = quote.get("open", [None] * len(closes))
     rows = {}
-    for ts, c in zip(result.get("timestamp") or [], closes):
-        if c is None:
+    for ts, o, c in zip(result.get("timestamp") or [], opens, closes):
+        if c is None or (include_open and o is None):
             continue
-        rows[datetime.fromtimestamp(ts, tz).strftime("%Y-%m-%d")] = float(c)
-    return [{"date": d, "close": rows[d]} for d in sorted(rows)]
+        rows[datetime.fromtimestamp(ts, tz).strftime("%Y-%m-%d")] = (
+            {"open": float(o), "close": float(c)} if include_open else {"close": float(c)}
+        )
+    return [{"date": d, **rows[d]} for d in sorted(rows)]
 
 
 # ── 데이터셋 ─────────────────────────────────────────────────────────
@@ -276,6 +280,14 @@ class DailyHistoryFetcher:
         self._yahoo_range = yahoo_range
 
     async def fetch_kr_index(self, symbol: str, count: int) -> List[dict]:
+        if symbol == "000660":
+            async with httpx.AsyncClient(timeout=self._timeout_sec, headers=self._HEADERS) as client:
+                resp = await client.get(
+                    self._YAHOO_URL.format(symbol="000660.KS"),
+                    params={"range": self._yahoo_range, "interval": "1d"},
+                )
+                resp.raise_for_status()
+                return parse_yahoo_chart(resp.text, include_open=True)[-count:]
         async with httpx.AsyncClient(timeout=self._timeout_sec, headers=self._HEADERS) as client:
             resp = await client.get(
                 self._NAVER_URL,
@@ -381,10 +393,10 @@ class PremarketDirectionService:
         history = self._load_history()
         for date, record in history.items():
             for code, entry in record.items():
-                if entry.get("actual_change") is None and date in actuals.get(code, {}):
+                if (entry.get("actual_change") is None or code == "000660") and date in actuals.get(code, {}):
                     entry["actual_change"] = actuals[code][date]
                 if (entry.get("body_probability") is not None
-                        and entry.get("actual_body_change") is None
+                        and (entry.get("actual_body_change") is None or code == "000660")
                         and date in body_actuals.get(code, {})):
                     entry["actual_body_change"] = body_actuals[code][date]
         today_record = history.setdefault(today, {})
@@ -475,10 +487,11 @@ class PremarketDirectionService:
             actual = actual_changes(rows, before=until)
             body_actual = actual_body_changes(rows, before=until)
             for d, rec in history.items():
-                if code in rec and rec[code].get("actual_change") is None and d in actual:
+                if code in rec and (rec[code].get("actual_change") is None or code == "000660") and d in actual:
                     rec[code]["actual_change"] = actual[d]
                 if (code in rec and rec[code].get("body_probability") is not None
-                        and rec[code].get("actual_body_change") is None and d in body_actual):
+                        and (rec[code].get("actual_body_change") is None or code == "000660")
+                        and d in body_actual):
                     rec[code]["actual_body_change"] = body_actual[d]
             if entry.get("actual_change") is None:
                 pending.append(code)
@@ -516,37 +529,46 @@ class PremarketDirectionService:
         return {"ok": True, "date": date, "targets": targets}
 
     async def _notify_result(self, result: dict) -> None:
-        def rate(t):
-            return f"{t['hits']}/{t['n']}({t['hits'] / t['n'] * 100:.0f}%)" if t["n"] else "0/0"
-
-        lines = []
+        direction_hits = sum(t["direction_hit"] for t in result["targets"])
+        body_targets = [t for t in result["targets"] if "body_hit" in t]
+        body_hits = sum(t["body_hit"] for t in body_targets)
+        hits = direction_hits + body_hits
+        total = len(result["targets"]) + len(body_targets)
+        lines = [
+            f"오늘 적중: 전일 대비 {direction_hits}/{len(result['targets'])} · "
+            f"양음봉 {body_hits}/{len(body_targets)} (합계 {hits}/{total})"
+        ]
         for t in result["targets"]:
             if "body_probability" in t:
                 actual_body = "양봉" if t["actual_body_change"] > 0 else "음봉" if t["actual_body_change"] < 0 else "도지"
                 lines.append(
-                    f"• {t['name']} {describe_body(t['body_probability'])} → 실제 "
+                    f"• {t['name']} ({t['score']['hits']}/{t['score']['total']})\n"
+                    f"  양음봉: {describe_body(t['body_probability'])} → 실제 "
                     f"{actual_body}({t['actual_body_change'] * 100:+.2f}%) "
                     f"{'적중' if t['body_hit'] else '실패'}\n"
-                    f"  전일 대비 {describe(t['probability'])} → 실제 {t['actual_change'] * 100:+.2f}% "
-                    f"{'적중' if t['direction_hit'] else '실패'} — {t['score']['hits']}/{t['score']['total']}"
+                    f"  전일 대비: {describe(t['probability'])} → 실제 {t['actual_change'] * 100:+.2f}% "
+                    f"{'적중' if t['direction_hit'] else '실패'}"
                 )
             else:
                 lines.append(
-                    f"• {t['name']} 전일 대비 {describe(t['probability'])} → 실제 "
+                    f"• {t['name']}: 전일 대비 {describe(t['probability'])} → 실제 "
                     f"{t['actual_change'] * 100:+.2f}% {'적중' if t['direction_hit'] else '실패'}"
                 )
-        lines.append("• 누적: " + " · ".join(
-            (
-                f"{t['name']} 양음봉 전체 {rate(t['body_total'])}, 전일방향 전체 {rate(t['total'])}"
-                if "body_total" in t else f"{t['name']} 전일방향 전체 {rate(t['total'])}"
-            ) for t in result["targets"]
-        ))
-        hits = sum(t["score"]["hits"] for t in result["targets"])
-        total = sum(t["score"]["total"] for t in result["targets"])
+        lines.append("누적 (기록된 예측 기준)")
+        for t in result["targets"]:
+            if "body_total" in t:
+                lines.append(
+                    f"• {t['name']}: 양음봉 {t['body_total']['hits']}/{t['body_total']['n']}일 · "
+                    f"전일 대비 {t['total']['hits']}/{t['total']['n']}일"
+                )
+            else:
+                lines.append(f"• {t['name']}: 전일 대비 {t['total']['hits']}/{t['total']['n']}일")
+        lines.append("※ 양음봉 등락률은 당일 시가, 전일 대비 등락률은 전 거래일 종가 기준")
         await self._notification_service.emit(
             category=NotificationCategory.STRATEGY,
             level=NotificationLevel.INFO,
-            title=f"장마감 양음봉·종가 예측 결과 ({result['date']}) — {hits}/{total} 적중",
+            title=(f"장마감 양음봉·종가 예측 결과 ({result['date']}) — "
+                   f"전일 대비 {direction_hits}/{len(result['targets'])} · 양음봉 {body_hits}/{len(body_targets)}"),
             message="\n".join(lines),
             metadata={
                 "force_external": True,

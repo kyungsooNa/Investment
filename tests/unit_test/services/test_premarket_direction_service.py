@@ -6,12 +6,15 @@ from unittest.mock import AsyncMock, MagicMock
 
 import json
 
+import httpx
 import pytest
+import respx
 
 from services.notification_service import NotificationCategory
 from services.premarket_direction_service import (
     FORECAST_FEATURES,
     TARGETS,
+    DailyHistoryFetcher,
     PremarketDirectionService,
     build_forecast_features,
     summarize_body_track,
@@ -79,6 +82,27 @@ def _service(fetcher, clock=None, notifier=None, history_path=None):
         min_train_days=250,
         history_path=history_path,
     )
+
+
+@pytest.mark.asyncio
+async def test_hynix_daily_prices_use_yahoo_regular_session_ohlc():
+    payload = {"chart": {"result": [{
+        "meta": {"gmtoffset": 32400},
+        "timestamp": [1795392000, 1795478400],
+        "indicators": {"quote": [{
+            "open": [1079000, 1212000], "close": [1085000, 1158000],
+        }]},
+    }]}}
+    with respx.mock(assert_all_called=True) as router:
+        route = router.get("https://query1.finance.yahoo.com/v8/finance/chart/000660.KS")
+        route.mock(return_value=httpx.Response(200, json=payload))
+        rows = await DailyHistoryFetcher().fetch_kr_index("000660", 2)
+
+    assert route.called
+    assert rows == [
+        {"date": "2026-11-23", "open": 1079000, "close": 1085000},
+        {"date": "2026-11-24", "open": 1212000, "close": 1158000},
+    ]
 
 
 def test_build_forecast_features_uses_sessions_after_previous_korean_close():
@@ -266,7 +290,8 @@ async def test_notification_goes_external_with_track_and_previous_result(tmp_pat
     notifier = MagicMock()
     notifier.emit = AsyncMock()
 
-    await _service(FakeFetcher(today_open=None), notifier=notifier, history_path=path).refresh(notify=True)
+    fetcher = FakeFetcher(today_open=None)
+    await _service(fetcher, notifier=notifier, history_path=path).refresh(notify=True)
 
     kwargs = notifier.emit.await_args.kwargs
     assert kwargs["metadata"]["force_external"] is True        # 텔레그램(외부) 전송
@@ -274,7 +299,9 @@ async def test_notification_goes_external_with_track_and_previous_result(tmp_pat
     assert "오늘 예측\n기준: 양음봉은 당일 시가, 전일 대비는 2026-11-18 종가" in message
     assert "전 거래일 결과 (2026-11-18)" in message
     assert "• 코스피: 전일 대비 ▲ 상승 마감 80% → 실제 +0.45% 적중" in message
-    assert "• SK하이닉스: 전일 대비 ▼ 하락 마감 80% → 실제 +0.30% 실패" in message
+    hynix_change = fetcher.kr[-1]["close"] / fetcher.kr[-2]["close"] - 1
+    hynix_result = "적중" if hynix_change < 0 else "실패"
+    assert f"• SK하이닉스: 전일 대비 ▼ 하락 마감 80% → 실제 {hynix_change * 100:+.2f}% {hynix_result}" in message
     assert "최근 최대 20회 예측 적중 (기록된 날 기준)" in message
     assert "• 코스피: 양음봉 0/0일 · 전일 대비 1/1일" in message
 
@@ -362,13 +389,37 @@ async def test_report_close_fills_today_actual_and_notifies_hit_and_totals(tmp_p
     kwargs = notifier.emit.await_args.kwargs
     assert kwargs["metadata"]["force_external"] is True
     assert kwargs["metadata"]["event"] == "premarket_direction_result"
-    assert kwargs["title"].endswith("3/4 적중")
+    assert kwargs["title"].endswith("전일 대비 1/2 · 양음봉 2/2")
     message = kwargs["message"]
-    assert "코스피 양봉 80% → 실제 양봉(+1.03%) 적중" in message
-    assert "전일 대비 ▼ 하락 마감 77% → 실제 -2.00% 적중 — 2/2" in message
-    assert "SK하이닉스 양봉 80% → 실제 양봉(+1.03%) 적중" in message
-    assert "전일 대비 ▲ 상승 마감 70% → 실제 -2.00% 실패 — 1/2" in message
-    assert "코스피 양음봉 전체 1/1(100%), 전일방향 전체 2/2(100%)" in message
+    assert "오늘 적중: 전일 대비 1/2 · 양음봉 2/2 (합계 3/4)" in message
+    assert "• 코스피 (2/2)\n  양음봉: 양봉 80% → 실제 양봉(+1.03%) 적중\n  전일 대비: ▼ 하락 마감 77% → 실제 -2.00% 적중" in message
+    assert "• SK하이닉스 (1/2)\n  양음봉: 양봉 80% → 실제 양봉(+1.03%) 적중\n  전일 대비: ▲ 상승 마감 70% → 실제 -2.00% 실패" in message
+    assert "누적 (기록된 예측 기준)\n• 코스피: 양음봉 1/1일 · 전일 대비 2/2일" in message
+    assert "※ 양음봉 등락률은 당일 시가, 전일 대비 등락률은 전 거래일 종가 기준" in message
+
+
+@pytest.mark.asyncio
+async def test_report_close_replaces_stale_hynix_actuals_from_price_feed(tmp_path):
+    path = tmp_path / "history.json"
+    fetcher = FakeFetcher(today_open=1.0)
+    fetcher.kr[-3]["close"] = 1113000
+    fetcher.kr[-2].update(open=1079000, close=1085000)
+    fetcher.kr[-1].update(open=1212000, close=1158000)
+    path.write_text(json.dumps({
+        "2026-11-18": {"000660": {"probability": 0.2, "body_probability": 0.7,
+                                    "actual_change": -0.0136, "actual_body_change": 0.02}},
+        "2026-11-19": {"000660": {"probability": 0.98, "body_probability": 0.24,
+                                    "actual_change": 0.0518, "actual_body_change": -0.0446}},
+    }), encoding="utf-8")
+
+    result = await _service(fetcher, history_path=path).report_close("2026-11-19", notify=False)
+
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    assert saved["2026-11-18"]["000660"]["actual_change"] == pytest.approx(1085000 / 1113000 - 1)
+    assert saved["2026-11-18"]["000660"]["actual_body_change"] == pytest.approx(1085000 / 1079000 - 1)
+    assert saved["2026-11-19"]["000660"]["actual_change"] == pytest.approx(1158000 / 1085000 - 1)
+    assert saved["2026-11-19"]["000660"]["actual_body_change"] == pytest.approx(1158000 / 1212000 - 1)
+    assert result["targets"][0]["actual_change"] == pytest.approx(1158000 / 1085000 - 1)
 
 
 @pytest.mark.asyncio
