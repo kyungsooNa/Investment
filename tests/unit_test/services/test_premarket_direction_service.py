@@ -115,7 +115,7 @@ async def test_refresh_predicts_up_after_strong_us_session_and_notifies():
     kwargs = notifier.emit.await_args.kwargs
     assert kwargs["category"] == NotificationCategory.STRATEGY
     assert "종가" in kwargs["title"]
-    assert kwargs["message"].index("양봉") < kwargs["message"].index("전일 대비")
+    assert kwargs["message"].index("  양음봉:") < kwargs["message"].index("  전일 대비:")
     assert "• 코스피\n  양음봉: 양봉" in kwargs["message"]
     assert "전일 대비: ▲ 상승 마감" in kwargs["message"]
     assert "코스닥" in kwargs["message"] and "SK하이닉스" in kwargs["message"]
@@ -271,7 +271,7 @@ async def test_notification_goes_external_with_track_and_previous_result(tmp_pat
     kwargs = notifier.emit.await_args.kwargs
     assert kwargs["metadata"]["force_external"] is True        # 텔레그램(외부) 전송
     message = kwargs["message"]
-    assert "오늘 예측 (2026-11-18 종가 기준)" in message
+    assert "오늘 예측\n기준: 양음봉은 당일 시가, 전일 대비는 2026-11-18 종가" in message
     assert "전 거래일 결과 (2026-11-18)" in message
     assert "• 코스피: 전일 대비 ▲ 상승 마감 80% → 실제 +0.45% 적중" in message
     assert "• SK하이닉스: 전일 대비 ▼ 하락 마감 80% → 실제 +0.30% 실패" in message
@@ -299,6 +299,7 @@ async def test_notification_separates_forecast_previous_results_and_sample_sizes
     await svc._notify(result)
 
     message = notifier.emit.await_args.kwargs["message"]
+    assert "오늘 예측\n기준: 양음봉은 당일 시가, 전일 대비는 2026-11-23 종가" in message
     assert "코스피\n  양음봉: 음봉 52% (중립)\n  전일 대비: ▲ 상승 마감 99% (상승 우세)" in message
     assert "전 거래일 결과 (2026-11-23)\n• 코스피\n  양음봉: 음봉 51% → 실제 음봉 적중\n  전일 대비: ▼ 하락 마감 97% → 실제 -3.31% 적중" in message
     assert "최근 최대 20회 예측 적중 (기록된 날 기준)\n• 코스피: 양음봉 1/1일 · 전일 대비 1/1일" in message
