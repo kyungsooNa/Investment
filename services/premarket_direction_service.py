@@ -561,41 +561,51 @@ class PremarketDirectionService:
         )
 
     async def _notify(self, result: dict) -> None:
-        lines = [
-            f"• {t['name']} {describe_body(t['body_probability'])} ({t['body_outlook']}) · "
-            f"전일 대비 {describe(t['probability'])} ({t['outlook']})"
-            for t in result["targets"]
-        ]
-        moves = " · ".join(f"{f['label']} {f['value'] * 100:+.2f}%" for f in result["features"])
-        lines += [f"• 기준: {result['base_date']} 종가 대비", f"• 밤사이: {moves}"]
+        lines = [f"오늘 예측 ({result['base_date']} 종가 기준)"]
+        for t in result["targets"]:
+            lines.append(
+                f"• {t['name']}\n"
+                f"  양음봉: {describe_body(t['body_probability'])} ({t['body_outlook']})\n"
+                f"  전일 대비: {describe(t['probability'])} ({t['outlook']})"
+            )
+        lines.append("\n밤사이 입력 지표")
+        lines.extend(
+            "• " + " · ".join(f"{f['label']} {f['value'] * 100:+.2f}%" for f in group)
+            for group in (result["features"][i:i + 3] for i in range(0, len(result["features"]), 3))
+        )
         previous = [t for t in result["targets"] if t.get("previous")]
         if previous:
             prev_date = previous[0]["previous"]["date"]
-            lines.append(f"• 전 거래일({prev_date}): " + " · ".join(
-                (
-                    f"{t['name']} {describe_body(t['previous']['body_probability'])} → 실제 "
-                    f"{'양봉' if t['previous']['actual_body_change'] > 0 else '음봉'} "
-                    f"{'적중' if _is_body_hit(t['previous']['body_probability'], t['previous']['actual_body_change']) else '실패'} / "
-                    f"전일 대비 {describe(t['previous']['probability'])} → 실제 "
-                    f"{t['previous']['actual_change'] * 100:+.2f}% "
-                    f"{'적중' if _is_hit(t['previous']['probability'], t['previous']['actual_change']) else '실패'}"
-                    if t["previous"].get("body_probability") is not None
-                    and t["previous"].get("actual_body_change") is not None
-                    else f"{t['name']} {describe(t['previous']['probability'])} → 실제 "
-                    f"{t['previous']['actual_change'] * 100:+.2f}% "
-                    f"{'적중' if _is_hit(t['previous']['probability'], t['previous']['actual_change']) else '실패'}"
-                )
-                for t in previous
-            ))
+            lines.append(f"\n전 거래일 결과 ({prev_date})")
+            for t in previous:
+                past = t["previous"]
+                if past.get("body_probability") is not None and past.get("actual_body_change") is not None:
+                    actual_body = "양봉" if past["actual_body_change"] > 0 else "음봉" if past["actual_body_change"] < 0 else "도지"
+                    lines.append(
+                        f"• {t['name']}\n"
+                        f"  양음봉: {describe_body(past['body_probability'])} → 실제 {actual_body} "
+                        f"{'적중' if _is_body_hit(past['body_probability'], past['actual_body_change']) else '실패'}\n"
+                        f"  전일 대비: {describe(past['probability'])} → 실제 "
+                        f"{past['actual_change'] * 100:+.2f}% "
+                        f"{'적중' if _is_hit(past['probability'], past['actual_change']) else '실패'}"
+                    )
+                else:
+                    lines.append(
+                        f"• {t['name']}: 전일 대비 {describe(past['probability'])} → 실제 "
+                        f"{past['actual_change'] * 100:+.2f}% "
+                        f"{'적중' if _is_hit(past['probability'], past['actual_change']) else '실패'}"
+                    )
         tracked = [t for t in result["targets"] if t.get("track", {}).get("n") or t.get("body_track", {}).get("n")]
         if tracked:
-            lines.append(f"• 최근 {TRACK_WINDOW}일 적중: " + " · ".join(
-                f"{t['name']} 양음봉 {t['body_track']['hits']}/{t['body_track']['n']} · "
-                f"전일방향 {t['track']['hits']}/{t['track']['n']}"
-                for t in tracked
-            ))
+            lines.append(f"\n최근 최대 {TRACK_WINDOW}회 예측 적중 (기록된 날 기준)")
+            for t in tracked:
+                body = t.get("body_track", {"hits": 0, "n": 0})
+                lines.append(
+                    f"• {t['name']}: 양음봉 {body['hits']}/{body['n']}일 · "
+                    f"전일 대비 {t['track']['hits']}/{t['track']['n']}일"
+                )
         message = "\n".join(lines) + (
-            "\n※ 양음봉은 종가>시가, 전일방향은 종가>전일종가 기준. 각각 별도 모델·적중률이며 "
+            "\n※ 양음봉은 종가>시가, 전일 대비는 종가>전일종가 기준. 확률은 모델 추정치이며 각각 별도 모델·적중률. "
             "양음봉 예측은 과거 약 50% 수준이라 단독 진입 근거 아님"
         )
         await self._notification_service.emit(
