@@ -8,7 +8,6 @@ import json
 
 import httpx
 import pytest
-import respx
 
 from services.notification_service import NotificationCategory
 from services.premarket_direction_service import (
@@ -85,7 +84,7 @@ def _service(fetcher, clock=None, notifier=None, history_path=None):
 
 
 @pytest.mark.asyncio
-async def test_hynix_daily_prices_use_yahoo_regular_session_ohlc():
+async def test_hynix_daily_prices_use_yahoo_regular_session_ohlc(monkeypatch):
     payload = {"chart": {"result": [{
         "meta": {"gmtoffset": 32400},
         "timestamp": [1795392000, 1795478400],
@@ -93,12 +92,23 @@ async def test_hynix_daily_prices_use_yahoo_regular_session_ohlc():
             "open": [1079000, 1212000], "close": [1085000, 1158000],
         }]},
     }]}}
-    with respx.mock(assert_all_called=True) as router:
-        route = router.get("https://query1.finance.yahoo.com/v8/finance/chart/000660.KS")
-        route.mock(return_value=httpx.Response(200, json=payload))
+    requests = []
+
+    def respond(request):
+        requests.append(request)
+        return httpx.Response(200, json=payload)
+
+    original_client = httpx.AsyncClient
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            "services.premarket_direction_service.httpx.AsyncClient",
+            lambda **kwargs: original_client(transport=httpx.MockTransport(respond), **kwargs),
+        )
         rows = await DailyHistoryFetcher().fetch_kr_index("000660", 2)
 
-    assert route.called
+    assert len(requests) == 1
+    assert requests[0].url.path == "/v8/finance/chart/000660.KS"
+    assert requests[0].url.params["interval"] == "1d"
     assert rows == [
         {"date": "2026-11-23", "open": 1079000, "close": 1085000},
         {"date": "2026-11-24", "open": 1212000, "close": 1158000},
