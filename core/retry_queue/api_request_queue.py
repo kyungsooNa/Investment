@@ -174,4 +174,4 @@ class ApiRequestQueue:
 
     @property
     def pending_count(self) -> int:
-        return len(self._pending_tasks)
+        return sum(not task.done() for task in self._pending_tasks)

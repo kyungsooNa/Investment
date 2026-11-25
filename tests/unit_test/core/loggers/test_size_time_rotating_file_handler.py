@@ -78,12 +78,12 @@ def test_size_time_rotating_handler_backup_limit(tmp_path):
     files = list(tmp_path.glob("test_backup_*.log"))
     assert len(files) == backup_count + 1
 
-    filenames = [f.name for f in files]
-    assert "test_backup_3.log" in filenames
-    assert "test_backup_4.log" in filenames
-    assert "test_backup_5.log" in filenames
-    assert "test_backup_1.log" not in filenames
-    assert "test_backup_2.log" not in filenames
+    indices = sorted(int(f.stem.rsplit("_", 1)[-1]) for f in files)
+    assert indices == list(range(indices[0], indices[0] + backup_count + 1))
+    contents = "".join(f.read_text(encoding="utf-8") for f in files)
+    assert "Log message 0 " not in contents
+    for i in range(1, 4):
+        assert f"Log message {i} " in contents
 
 
 def test_json_extension_handling(tmp_path):

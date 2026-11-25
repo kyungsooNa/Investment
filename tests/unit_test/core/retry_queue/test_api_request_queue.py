@@ -94,6 +94,13 @@ class TestSubmitSuccess:
 
         assert queue.pending_count == 0
 
+    async def test_pending_count_ignores_finished_task_before_cleanup_callback(self, queue):
+        task = asyncio.create_task(asyncio.sleep(0))
+        await task
+        queue._pending_tasks.add(task)
+
+        assert queue.pending_count == 0
+
 
 class TestSubmitNonRetriableFail:
     async def test_non_retriable_fail_resolves_immediately(self, queue):
