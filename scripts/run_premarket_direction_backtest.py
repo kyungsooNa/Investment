@@ -1,6 +1,6 @@
-"""장전 코스피/코스닥 방향 예측 지표 백테스트.
+"""장전 코스피/코스닥/SK하이닉스 운영 예측 백테스트.
 
-밤사이 미국장·환율·변동성 지표가 한국 지수의 당일 방향을 얼마나 맞히는지 측정한다.
+밤사이 미국장·환율·변동성 지표가 세 대상의 당일 방향을 얼마나 맞히는지 측정한다.
 
 타깃(라벨):
     up_close (B) 종가 > 전일 종가   (전일 대비 상승 마감)
@@ -22,11 +22,14 @@ from __future__ import annotations
 import argparse
 import json
 import math
+from datetime import datetime
 from typing import Dict, List, Optional, Sequence
+from zoneinfo import ZoneInfo
 
 from services.premarket_direction_service import (
     GAP,
     KR_PREV,
+    TARGETS,
     US_FEATURES,
     FeatureSpec,
     _fit_logit,
@@ -74,7 +77,7 @@ def walk_forward_logit(rows, features: List[str], label: str, min_train: int = 2
     for i in range(min_train, len(rows)):
         if model is None or (i - min_train) % refit_every == 0:
             train = [r for r, ok in zip(rows[:i], complete[:i]) if ok]
-            if len(train) < 30:
+            if len(train) < min_train:
                 continue
             model = _fit_logit([[r[f] for f in features] for r in train], [r[label] for r in train])
         if not complete[i]:
@@ -87,23 +90,56 @@ def walk_forward_logit(rows, features: List[str], label: str, min_train: int = 2
 
 def evaluate_model(rows, features: List[str], label: str, min_train: int, refit_every: int) -> dict:
     preds = walk_forward_logit(rows, features, label, min_train, refit_every)
-    scored = [(p, r) for p, r in zip(preds, rows) if p is not None]
+    scored = [(i, p, r) for i, (p, r) in enumerate(zip(preds, rows)) if p is not None]
     if not scored:
         return {"n": 0}
-    acc = sum((p > 0.5) == bool(r[label]) for p, r in scored) / len(scored)
-    base_up = sum(r[label] for _, r in scored) / len(scored)
-    prev_dir = [(r[KR_PREV.name] > 0) == bool(r[label]) for _, r in scored if r.get(KR_PREV.name)]
-    conf = [(p, r) for p, r in scored if p >= 0.6 or p <= 0.4]
+    acc = sum((p > 0.5) == bool(r[label]) for _, p, r in scored) / len(scored)
+    prior_up = [sum(r[label] for r in rows[:i]) / i for i, _, _ in scored]
+    prev_dir = [(r[KR_PREV.name] > 0) == bool(r[label]) for _, _, r in scored if r.get(KR_PREV.name)]
+    conf = [(p, r) for _, p, r in scored if p >= 0.6 or p <= 0.4]
     conf_acc = sum((p > 0.5) == bool(r[label]) for p, r in conf) / len(conf) if conf else float("nan")
+    calibration = []
+    for bucket in range(5):
+        group = [(p, r[label]) for _, p, r in scored if min(int(p * 5), 4) == bucket]
+        calibration.append({
+            "range": f"{bucket * 20}-{(bucket + 1) * 20}%",
+            "n": len(group),
+            "mean_predicted": sum(p for p, _ in group) / len(group) if group else None,
+            "observed_frequency": sum(y for _, y in group) / len(group) if group else None,
+        })
     return {
         "n": len(scored),
-        "start": scored[0][1]["date"],
+        "start": scored[0][2]["date"],
         "accuracy": acc,
-        "baseline_majority": max(base_up, 1 - base_up),
+        "baseline_majority": sum((rate > 0.5) == bool(row[label])
+                                 for rate, (_, _, row) in zip(prior_up, scored)) / len(scored),
         "baseline_prev_direction": sum(prev_dir) / len(prev_dir) if prev_dir else float("nan"),
         "confident_coverage": len(conf) / len(scored),
         "confident_accuracy": conf_acc,
+        "brier_score": sum((p - r[label]) ** 2 for _, p, r in scored) / len(scored),
+        "baseline_brier_score": sum((rate - row[label]) ** 2
+                                    for rate, (_, _, row) in zip(prior_up, scored)) / len(scored),
+        "calibration": calibration,
     }
+
+
+def analyze_operational(rows, feature_specs, min_train: int = 250, refit_every: int = 1) -> dict:
+    """운영과 동일한 특징값·최소 학습일수·매일 재학습으로 두 라벨을 검증한다."""
+    features = [f.name for f in feature_specs]
+    complete = [r for r in rows if all(r.get(f) is not None for f in features)]
+    return {
+        "features": features,
+        "n": len(complete),
+        "start": complete[0]["date"] if complete else None,
+        "end": complete[-1]["date"] if complete else None,
+        "model": {label: evaluate_model(complete, features, label, min_train, refit_every)
+                  for label in ("up_close", "up_body")},
+    }
+
+
+def historical_rows_before(rows, today: str) -> List[dict]:
+    """당일 장중 일봉은 종가가 확정되지 않았으므로 검증에서 제외한다."""
+    return [row for row in rows if row["date"] < today]
 
 
 def analyze(rows, min_train: int = 250, refit_every: int = 20) -> dict:
@@ -171,6 +207,33 @@ def format_report(results: Dict[str, dict]) -> str:
     return "\n".join(out)
 
 
+def format_operational_report(results: Dict[str, dict]) -> str:
+    out = []
+    for target in TARGETS:
+        res = results[target.code]
+        out.append(f"## {target.name} ({res['start']} ~ {res['end']}, {res['n']}일)")
+        out.append("운영 입력: " + ", ".join(res["features"]))
+        out.append("| 대상 | 표본외 n | 적중률 | 다수 방향 기준선 | Brier | 과거 빈도 기준선 Brier | 확신일 비중 | 확신일 적중률 |")
+        out.append("|---|---:|---:|---:|---:|---:|---:|---:|")
+        for label, title in (("up_close", "전일 대비"), ("up_body", "양음봉")):
+            model = res["model"][label]
+            if not model.get("n"):
+                continue
+            out.append(
+                f"| {title} | {model['n']} | {_pct(model['accuracy'])} | "
+                f"{_pct(model['baseline_majority'])} | {model['brier_score']:.4f} | "
+                f"{model['baseline_brier_score']:.4f} | {_pct(model['confident_coverage'])} | "
+                f"{_pct(model['confident_accuracy'])} |"
+            )
+            out.append(f"{title} 확률 구간 (예측 평균 → 실제 상승 빈도):")
+            for bucket in model["calibration"]:
+                if bucket["n"]:
+                    out.append(f"- {bucket['range']}: n={bucket['n']}, "
+                               f"{_pct(bucket['mean_predicted'])} → {_pct(bucket['observed_frequency'])}")
+        out.append("")
+    return "\n".join(out)
+
+
 # ── 수집 ─────────────────────────────────────────────────────────────
 
 _UA = {"User-Agent": "Mozilla/5.0"}
@@ -188,7 +251,7 @@ def fetch_kr_index(symbol: str, count: int) -> List[dict]:
     return parse_naver_fchart(resp.content.decode("euc-kr", errors="replace"))
 
 
-def fetch_yahoo(symbol: str, years: int) -> List[dict]:
+def fetch_yahoo(symbol: str, years: int, *, include_open: bool = False) -> List[dict]:
     import httpx
 
     resp = httpx.get(
@@ -197,26 +260,32 @@ def fetch_yahoo(symbol: str, years: int) -> List[dict]:
         headers=_UA, timeout=30,
     )
     resp.raise_for_status()
-    return parse_yahoo_chart(resp.text)
+    return parse_yahoo_chart(resp.text, include_open=include_open)
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(description="장전 코스피/코스닥 방향 예측 지표 백테스트")
+    p = argparse.ArgumentParser(description="장전 운영 방향 예측 백테스트")
     p.add_argument("--years", type=int, default=6, help="국내 지수 조회 기간(년)")
     p.add_argument("--min-train", type=int, default=250, help="walk-forward 최소 학습 일수")
-    p.add_argument("--refit-every", type=int, default=20, help="재학습 주기(일)")
+    p.add_argument("--refit-every", type=int, default=1, help="재학습 주기(일), 운영은 매일")
     p.add_argument("--json", help="결과 JSON 저장 경로")
     return p
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     args = build_parser().parse_args(argv)
-    us = {f.name: fetch_yahoo(f.symbol, args.years) for f in US_FEATURES}
+    today = datetime.now(ZoneInfo("Asia/Seoul")).date().isoformat()
+    specs = tuple(dict.fromkeys(f for target in TARGETS for f in target.features))
+    us = {f.name: fetch_yahoo(f.symbol, args.years) for f in specs}
     results = {}
-    for code, _ in KR_INDICES:
-        kr = fetch_kr_index(code, count=args.years * 250)
-        results[code] = analyze(build_dataset(kr, us), args.min_train, args.refit_every)
-    print(format_report(results))
+    for target in TARGETS:
+        kr = (fetch_yahoo("000660.KS", args.years, include_open=True)[-args.years * 250:]
+              if target.code == "000660" else fetch_kr_index(target.code, count=args.years * 250))
+        kr = historical_rows_before(kr, today)
+        feature_names = [f.name for f in target.features]
+        rows = build_dataset(kr, {name: us[name] for name in feature_names})
+        results[target.code] = analyze_operational(rows, target.features, args.min_train, args.refit_every)
+    print(format_operational_report(results))
     if args.json:
         with open(args.json, "w", encoding="utf-8") as fh:
             json.dump(results, fh, ensure_ascii=False, indent=2)
