@@ -533,24 +533,36 @@ class PremarketDirectionService:
         hits = direction_hits + body_hits
         total = len(result["targets"]) + len(body_targets)
         lines = [
-            f"오늘 적중: 전일 대비 {direction_hits}/{len(result['targets'])} · "
-            f"양음봉 {body_hits}/{len(body_targets)} (합계 {hits}/{total})"
+            f"🎯 오늘 {hits}/{total} 적중\n"
+            f"전일 대비 {direction_hits}/{len(result['targets'])} · "
+            f"양음봉 {body_hits}/{len(body_targets)}"
         ]
         for t in result["targets"]:
+            probability = t["probability"]
+            direction_forecast = (f"📈 상승 마감 {probability * 100:.0f}%" if probability >= 0.5
+                                  else f"📉 하락 마감 {(1 - probability) * 100:.0f}%")
+            direction_actual = ("📈 상승" if t["actual_change"] > 0 else
+                                "📉 하락" if t["actual_change"] < 0 else "➖ 보합")
+            direction_mark = "✅ 적중" if t["direction_hit"] else "❌ 실패"
             if "body_probability" in t:
-                actual_body = "양봉" if t["actual_body_change"] > 0 else "음봉" if t["actual_body_change"] < 0 else "도지"
+                body_probability = t["body_probability"]
+                body_forecast = (f"📈 양봉 {body_probability * 100:.0f}%" if body_probability >= 0.5
+                                 else f"📉 음봉 {(1 - body_probability) * 100:.0f}%")
+                actual_body = ("📈 양봉" if t["actual_body_change"] > 0 else
+                               "📉 음봉" if t["actual_body_change"] < 0 else "➖ 도지")
+                body_mark = "✅ 적중" if t["body_hit"] else "❌ 실패"
                 lines.append(
-                    f"• {t['name']} ({t['score']['hits']}/{t['score']['total']})\n"
-                    f"  양음봉: {describe_body(t['body_probability'])} → 실제 "
-                    f"{actual_body}({t['actual_body_change'] * 100:+.2f}%) "
-                    f"{'적중' if t['body_hit'] else '실패'}\n"
-                    f"  전일 대비: {describe(t['probability'])} → 실제 {t['actual_change'] * 100:+.2f}% "
-                    f"{'적중' if t['direction_hit'] else '실패'}"
+                    f"• {t['name']}  🎯 {t['score']['hits']}/{t['score']['total']}\n"
+                    f"  {body_mark} | 양음봉: {body_forecast} → 실제 "
+                    f"{actual_body}({t['actual_body_change'] * 100:+.2f}%)\n"
+                    f"  {direction_mark} | 전일 대비: {direction_forecast} → 실제 "
+                    f"{direction_actual}({t['actual_change'] * 100:+.2f}%)"
                 )
             else:
                 lines.append(
-                    f"• {t['name']}: 전일 대비 {describe(t['probability'])} → 실제 "
-                    f"{t['actual_change'] * 100:+.2f}% {'적중' if t['direction_hit'] else '실패'}"
+                    f"• {t['name']}  🎯 {t['score']['hits']}/{t['score']['total']}\n"
+                    f"  {direction_mark} | 전일 대비: {direction_forecast} → 실제 "
+                    f"{direction_actual}({t['actual_change'] * 100:+.2f}%)"
                 )
         lines.append("누적 (기록된 예측 기준)")
         for t in result["targets"]:
@@ -565,8 +577,9 @@ class PremarketDirectionService:
         await self._notification_service.emit(
             category=NotificationCategory.STRATEGY,
             level=NotificationLevel.INFO,
-            title=(f"장마감 양음봉·종가 예측 결과 ({result['date']}) — "
-                   f"전일 대비 {direction_hits}/{len(result['targets'])} · 양음봉 {body_hits}/{len(body_targets)}"),
+            title=(f"🎯 장마감 양음봉·종가 예측 결과 ({result['date']}) — "
+                   f"{hits}/{total} 적중 · 전일 대비 {direction_hits}/{len(result['targets'])} · "
+                   f"양음봉 {body_hits}/{len(body_targets)}"),
             message="\n".join(lines),
             metadata={
                 "force_external": True,

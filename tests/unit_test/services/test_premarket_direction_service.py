@@ -400,11 +400,11 @@ async def test_report_close_fills_today_actual_and_notifies_hit_and_totals(tmp_p
     kwargs = notifier.emit.await_args.kwargs
     assert kwargs["metadata"]["force_external"] is True
     assert kwargs["metadata"]["event"] == "premarket_direction_result"
-    assert kwargs["title"].endswith("전일 대비 1/2 · 양음봉 2/2")
+    assert kwargs["title"].startswith("🎯 장마감 양음봉·종가 예측 결과")
     message = kwargs["message"]
-    assert "오늘 적중: 전일 대비 1/2 · 양음봉 2/2 (합계 3/4)" in message
-    assert "• 코스피 (2/2)\n  양음봉: 양봉 80% → 실제 양봉(+1.03%) 적중\n  전일 대비: ▼ 하락 마감 77% → 실제 -2.00% 적중" in message
-    assert "• SK하이닉스 (1/2)\n  양음봉: 양봉 80% → 실제 양봉(+1.03%) 적중\n  전일 대비: ▲ 상승 마감 70% → 실제 -2.00% 실패" in message
+    assert "🎯 오늘 3/4 적중\n전일 대비 1/2 · 양음봉 2/2" in message
+    assert "• 코스피  🎯 2/2\n  ✅ 적중 | 양음봉: 📈 양봉 80% → 실제 📈 양봉(+1.03%)\n  ✅ 적중 | 전일 대비: 📉 하락 마감 77% → 실제 📉 하락(-2.00%)" in message
+    assert "• SK하이닉스  🎯 1/2\n  ✅ 적중 | 양음봉: 📈 양봉 80% → 실제 📈 양봉(+1.03%)\n  ❌ 실패 | 전일 대비: 📈 상승 마감 70% → 실제 📉 하락(-2.00%)" in message
     assert "누적 (기록된 예측 기준)\n• 코스피: 양음봉 1/1일 · 전일 대비 2/2일" in message
     assert "※ 양음봉 등락률은 당일 시가, 전일 대비 등락률은 전 거래일 종가 기준" in message
 
