@@ -340,6 +340,7 @@ async def test_notification_separates_forecast_previous_results_and_sample_sizes
     assert "코스피\n  양음봉: 음봉 52% (중립)\n  전일 대비: ▲ 상승 마감 99% (상승 우세)" in message
     assert "전 거래일 결과 (2026-11-23)\n• 코스피\n  양음봉: 음봉 51% → 실제 음봉 적중\n  전일 대비: ▼ 하락 마감 97% → 실제 -3.31% 적중" in message
     assert "최근 최대 20회 예측 적중 (기록된 날 기준)\n• 코스피: 양음봉 1/1일 · 전일 대비 1/1일" in message
+    assert "기록 1회는 확률 정확도를 판단하기에 부족" in message
     assert "밤사이 입력 지표\n• 필라델피아 반도체(SOX) +14.03%" in message
 
 

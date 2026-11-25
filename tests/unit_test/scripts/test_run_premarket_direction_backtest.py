@@ -10,11 +10,16 @@ import json
 import pytest
 
 from scripts.run_premarket_direction_backtest import (
+    analyze_operational,
     bucket_hit_rates,
+    evaluate_model,
+    historical_rows_before,
     sign_rule_hit_rate,
     walk_forward_logit,
 )
 from services.premarket_direction_service import (
+    FORECAST_FEATURES,
+    MU,
     FeatureSpec,
     asof_return,
     build_dataset,
@@ -136,3 +141,33 @@ def test_walk_forward_logit_never_trains_on_future_and_learns_simple_rule():
     assert len(scored) == 300
     acc = sum((p > 0.5) == bool(y) for p, y in scored) / len(scored)
     assert acc > 0.95
+
+
+def test_operational_backtest_uses_live_features_and_scores_both_targets():
+    rows = [{"date": f"d{i:04d}", "sox": (i % 7 - 3) / 100,
+             "mu": (i % 5 - 2) / 100, "up_close": int(i % 7 > 3),
+             "up_body": int(i % 5 > 2)} for i in range(40)]
+    base = analyze_operational(rows, FORECAST_FEATURES[:1], min_train=10)
+    hynix = analyze_operational(rows, FORECAST_FEATURES[:1] + (MU,), min_train=10)
+    assert base["features"] == ["sox"]
+    assert hynix["features"] == ["sox", "mu"]
+    assert set(base["model"]) == {"up_close", "up_body"}
+    assert base["model"]["up_close"]["n"] == 30
+
+
+def test_probability_report_includes_brier_and_observed_frequency():
+    rows = [{"date": f"d{i:04d}", "x": (i % 9 - 4) / 100,
+             "up_close": int(i % 9 > 4)} for i in range(45)]
+    result = evaluate_model(rows, ["x"], "up_close", min_train=10, refit_every=1)
+    assert 0 <= result["brier_score"] <= 1
+    assert 0 <= result["baseline_brier_score"] <= 1
+    assert sum(bucket["n"] for bucket in result["calibration"]) == result["n"]
+    for bucket in result["calibration"]:
+        if bucket["n"]:
+            assert 0 <= bucket["mean_predicted"] <= 1
+            assert 0 <= bucket["observed_frequency"] <= 1
+
+
+def test_backtest_excludes_unfinished_current_session():
+    rows = [_kr("2026-11-24", 100, 101), _kr("2026-11-25", 102, 99)]
+    assert historical_rows_before(rows, "2026-11-25") == rows[:1]

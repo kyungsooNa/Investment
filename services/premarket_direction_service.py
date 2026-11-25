@@ -2,10 +2,8 @@
 
 밤사이 미국장·VIX·환율 지표로 오늘 코스피·코스닥·SK하이닉스가 전일 종가보다 높게
 마감(B)할 확률과 시가보다 높게 마감(C, 양봉)할 확률을 각각 로지스틱 회귀로 추정한다.
-지표 선정 근거:
-`scripts/run_premarket_direction_backtest.py` (2021-10~2026-11 표본외, 매일 재학습)
-— 코스피 65.3%(기준선 54.2%, 확신일 72.0%), 코스닥 61.1%(52.4%, 67.4%).
-하이닉스 과거 성과는 일봉 원천 변경 후 재검증이 필요하다.
+운영 모델의 특징값·매일 재학습 기준 표본외 성능은
+`scripts/run_premarket_direction_backtest.py`로 확인한다.
 
 주의: 전일 대비 방향 예측력의 대부분은 시가 갭에서 나온다. 양·음봉 예측은 장중 방향을
 나타내지만 과거 적중률이 약 50%로 낮으므로 별도 확률·적중률로 표시한다.
@@ -626,8 +624,13 @@ class PremarketDirectionService:
                     f"• {t['name']}: 양음봉 {body['hits']}/{body['n']}일 · "
                     f"전일 대비 {t['track']['hits']}/{t['track']['n']}일"
                 )
+            sample_count = min(n for t in tracked
+                               for n in (t.get("track", {}).get("n", 0),
+                                         t.get("body_track", {}).get("n", 0)) if n)
+            if sample_count < TRACK_WINDOW:
+                lines.append(f"※ 기록 {sample_count}회는 확률 정확도를 판단하기에 부족")
         message = "\n".join(lines) + (
-            "\n※ 양음봉은 종가>시가, 전일 대비는 종가>전일종가 기준. 확률은 모델 추정치이며 각각 별도 모델·적중률. "
+            "\n※ 양음봉은 종가>시가, 전일 대비는 종가>전일종가 기준. 확률은 보정 검증 전 모델 추정치이며 각각 별도 모델·적중률. "
             "양음봉 예측은 과거 약 50% 수준이라 단독 진입 근거 아님"
         )
         await self._notification_service.emit(
