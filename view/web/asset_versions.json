@@ -104,8 +104,8 @@
     "sha256": "7511e54cdbc3748a59bcea795214891c8a9fbae705969ed99cd033cf3fc8a7bb"
   },
   "js/scheduler.js": {
-    "version": 14,
-    "sha256": "758f71a17787566172189257781efede17e85e3b59a9c6a1b316e4e6d191417f"
+    "version": 15,
+    "sha256": "6aab935b34499bb6ada18693f1d0efbbc85cb4e91b0e426f40250159d1cfee5e"
   },
   "js/stock.js": {
     "version": 18,

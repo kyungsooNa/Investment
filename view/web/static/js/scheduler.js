@@ -34,7 +34,7 @@ function fetchSchedulerJson(url, options = {}, timeoutMs = 8000) {
 function syncSchedulerRealtimeState(data) {
     const marketTasks = (data && data.market_tasks) || [];
     const hasRunningScheduler = Boolean(data && data.running);
-    const hasRunningMarketTask = marketTasks.some(task => task.running || task.state === 'running');
+    const hasRunningMarketTask = marketTasks.some(isMarketTaskArmed);
     if (hasRunningScheduler || hasRunningMarketTask) {
         if (!schedulerPollingId) {
             startSchedulerPolling();
@@ -299,6 +299,16 @@ function renderMarketTasks(tasks) {
         const phaseDetail = progress.phase_detail
             ? ` | ${escapeHtml(progress.phase_detail)}`
             : '';
+        const strategyNames = task.name === 'overseas_intraday' && Array.isArray(progress.strategies)
+            ? progress.strategies : [];
+        const strategyList = strategyNames.length
+            ? `<div style="margin-top:8px;color:var(--text-secondary);font-size:0.9em;">
+                장중 전략 ${strategyNames.length}개:
+                <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;">
+                    ${strategyNames.map(name => `<span class="badge paper">${escapeHtml(name.replace(/_overseas_intraday$/, ''))}</span>`).join('')}
+                </div>
+            </div>`
+            : '';
 
         return `
         <div class="card" style="margin-bottom:8px;">
@@ -314,6 +324,7 @@ function renderMarketTasks(tasks) {
             <div style="margin-top:8px;color:var(--text-secondary);font-size:0.9em;">
                 ${progressText} | 실주문 자동매매: ${task.live_trading ? '허용' : '잠금'}${phaseDetail}
             </div>
+            ${strategyList}
         </div>`;
     }).join('');
 }
