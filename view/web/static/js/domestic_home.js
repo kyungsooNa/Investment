@@ -178,6 +178,10 @@ function _premarketTrackText(target) {
 }
 
 function _renderPremarketDirection(box, data) {
+    if (data.skipped) {
+        box.innerHTML = `<p class="small">${escapeHtml(data.message || '장전 예측을 보류합니다.')}</p>`;
+        return;
+    }
     const targets = (data.targets || []).map(target => {
         const prob = Number(target.probability || 0);
         const bodyProb = Number(target.body_probability || 0);

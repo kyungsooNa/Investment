@@ -347,7 +347,7 @@ class PremarketDirectionService:
             result = {"ok": False, "date": today, "error": _describe_error(exc)}
             self._logger.warning("장전 양음봉·종가 방향 예측 실패: %s", result["error"])
         self._latest = result
-        if notify and result["ok"] and self._notification_service is not None:
+        if notify and result["ok"] and not result.get("skipped") and self._notification_service is not None:
             await self._notify(result)
         return result
 
@@ -364,13 +364,23 @@ class PremarketDirectionService:
             kr = [r for r in rows if r["date"] < today]
             if not kr:
                 raise ValueError(f"시세 수신 실패: {target.code}")
+            if base_date is None:
+                base_date = kr[-1]["date"]
+                if not any(base_date <= row["date"] < today for row in us["spx"]):
+                    return {
+                        "ok": True, "date": today, "skipped": "no_new_us_session",
+                        "message": "미국장 신규 종가가 없어 장전 예측을 보류합니다.", "targets": [],
+                    }
+            elif kr[-1]["date"] != base_date:
+                raise ValueError(
+                    f"국내 종가 기준일 불일치: {target.code} {kr[-1]['date']} != {base_date}"
+                )
             names = [f.name for f in target.features]
             prediction, target_feats = self._predict(kr, {n: us[n] for n in names}, names, today)
             targets.append({"code": target.code, "name": target.name, **prediction})
             feats.update(target_feats)
             actuals[target.code] = actual_changes(rows, before=today)
             body_actuals[target.code] = actual_body_changes(rows, before=today)
-            base_date = base_date or kr[-1]["date"]
         self._track(today, targets, actuals, body_actuals)
         return {
             "ok": True,
