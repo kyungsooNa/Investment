@@ -165,6 +165,38 @@ async def test_refresh_predicts_down_after_weak_us_session():
 
 
 @pytest.mark.asyncio
+async def test_refresh_skips_when_no_new_us_stock_session(tmp_path):
+    fetcher = FakeFetcher()
+    fetcher.us["^GSPC"].pop()  # 다른 지표가 갱신되어도 미국 주식 세션은 없음
+    notifier = MagicMock()
+    notifier.emit = AsyncMock()
+    history_path = tmp_path / "history.json"
+
+    result = await _service(fetcher, notifier=notifier, history_path=history_path).refresh()
+
+    assert result["ok"] is True
+    assert result["skipped"] == "no_new_us_session"
+    assert "미국장" in result["message"]
+    assert result["targets"] == []
+    assert not history_path.exists()
+    notifier.emit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_refresh_rejects_stale_korean_target_date():
+    fetcher = FakeFetcher()
+    fetcher.fetch_kr_index = AsyncMock(
+        side_effect=lambda code, count: [r for r in fetcher.kr if code != "000660" or r["date"] < "2026-11-18"]
+    )
+
+    result = await _service(fetcher).refresh(notify=False)
+
+    assert result["ok"] is False
+    assert "000660" in result["error"]
+    assert "기준일 불일치" in result["error"]
+
+
+@pytest.mark.asyncio
 async def test_hynix_target_uses_micron_on_top_of_base_features():
     kospi, kosdaq, hynix = TARGETS
     assert kospi.features == FORECAST_FEATURES
@@ -209,6 +241,8 @@ async def test_get_or_compute_caches_per_day_without_notifying():
     notifier.emit.assert_not_awaited()
 
     clock.get_current_kst_time.return_value = datetime(2026, 11, 20, 8, 35)
+    for rows in fetcher.us.values():
+        rows.append({"date": "2026-11-19", "close": rows[-1]["close"] * 1.01})
     await svc.get_or_compute()
     assert fetcher.fetch_kr_index.await_count == 2 * len(TARGETS)
 

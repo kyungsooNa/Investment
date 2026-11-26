@@ -212,4 +212,15 @@ test("장전 예측 실패 시 사유를 표시", async () => {
   assert(box.querySelector(".premarket-direction-prob") === null, "실패인데 확률 표시");
 });
 
+test("미국장 새 종가가 없으면 확률 대신 보류 사유를 표시", async () => {
+  const window = await makeWindow({
+    premarketReport: { rt_cd: "0", data: {
+      ok: true, skipped: "no_new_us_session", message: "미국장 신규 종가가 없어 장전 예측을 보류합니다.", targets: [],
+    } },
+  });
+  const box = window.document.getElementById("premarket-direction");
+  assert(box.textContent.includes("미국장 신규 종가"), "보류 사유 누락");
+  assert(box.querySelector(".premarket-direction-prob") === null, "보류 중 확률 표시");
+});
+
 await run();
