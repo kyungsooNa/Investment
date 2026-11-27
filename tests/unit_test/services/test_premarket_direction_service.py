@@ -33,8 +33,9 @@ def _days(n, end=date(2026, 11, 18)):
 class FakeFetcher:
     """미국 지표가 오르면 다음 한국 거래일이 상승 마감하도록 만든 합성 데이터."""
 
-    def __init__(self, n=400, today="2026-11-19", today_us_move=0.02, missing=None, today_open=1.0):
-        days = _days(n)
+    def __init__(self, n=400, today="2026-11-19", today_us_move=0.02, missing=None,
+                 today_open=1.0, end=date(2026, 11, 18)):
+        days = _days(n, end=end)
         self.kr, self.us = [], {}
         moves = [((i * 37) % 21 - 10) / 500.0 for i in range(n)]  # -2% ~ +2%
         moves[-1] = today_us_move  # 11-18 미국 세션 → 11-19 한국장 예측 입력
@@ -72,8 +73,8 @@ def _clock(ts=datetime(2026, 11, 19, 8, 35)):
     return clock
 
 
-def _service(fetcher, clock=None, notifier=None, history_path=None):
-    return PremarketDirectionService(
+def _service(fetcher, clock=None, notifier=None, history_path=None, market_calendar_service=None):
+    kwargs = dict(
         fetcher=fetcher,
         market_clock=clock or _clock(),
         notification_service=notifier,
@@ -81,6 +82,9 @@ def _service(fetcher, clock=None, notifier=None, history_path=None):
         min_train_days=250,
         history_path=history_path,
     )
+    if market_calendar_service is not None:
+        kwargs["market_calendar_service"] = market_calendar_service
+    return PremarketDirectionService(**kwargs)
 
 
 @pytest.mark.asyncio
@@ -166,13 +170,16 @@ async def test_refresh_predicts_down_after_weak_us_session():
 
 @pytest.mark.asyncio
 async def test_refresh_skips_when_no_new_us_stock_session(tmp_path):
-    fetcher = FakeFetcher()
+    fetcher = FakeFetcher(today="2026-11-27", end=date(2026, 11, 26))
     fetcher.us["^GSPC"].pop()  # 다른 지표가 갱신되어도 미국 주식 세션은 없음
     notifier = MagicMock()
     notifier.emit = AsyncMock()
     history_path = tmp_path / "history.json"
 
-    result = await _service(fetcher, notifier=notifier, history_path=history_path).refresh()
+    result = await _service(
+        fetcher, clock=_clock(datetime(2026, 11, 27, 8, 35)),
+        notifier=notifier, history_path=history_path,
+    ).refresh()
 
     assert result["ok"] is True
     assert result["skipped"] == "no_new_us_session"
@@ -180,6 +187,39 @@ async def test_refresh_skips_when_no_new_us_stock_session(tmp_path):
     assert result["targets"] == []
     assert not history_path.exists()
     notifier.emit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_missing_us_close_on_trading_day_is_retryable():
+    fetcher = FakeFetcher()
+    last_spx = fetcher.us["^GSPC"].pop()
+    svc = _service(fetcher)
+
+    first = await svc.get_or_compute()
+    assert first["ok"] is False
+    assert "미국장 종가 미갱신" in first["error"]
+
+    fetcher.us["^GSPC"].append(last_spx)
+    second = await svc.get_or_compute()
+    assert second["ok"] is True
+    assert "skipped" not in second
+    assert [t["code"] for t in second["targets"]] == ["KOSPI", "KOSDAQ", "000660"]
+
+
+@pytest.mark.asyncio
+async def test_refresh_rejects_all_targets_stale_against_korean_calendar():
+    fetcher = FakeFetcher()
+    fetcher.fetch_kr_index = AsyncMock(
+        return_value=[r for r in fetcher.kr if r["date"] < "2026-11-18"]
+    )
+    calendar = MagicMock()
+    calendar.is_business_day = AsyncMock(side_effect=lambda day: day == "20261118")
+
+    result = await _service(fetcher, market_calendar_service=calendar).refresh(notify=False)
+
+    assert result["ok"] is False
+    assert "국내 직전 거래일" in result["error"]
+    assert "2026-11-18" in result["error"]
 
 
 @pytest.mark.asyncio

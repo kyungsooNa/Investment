@@ -1744,6 +1744,7 @@ def test_premarket_direction_forecast_wired_for_trading_and_service_for_web(patc
     ctx = _make_fake_context()
     ServiceContainer(ctx).run()
     assert ctx.premarket_direction_service is not None
+    assert ctx.premarket_direction_service._market_calendar_service is ctx._mcs
     assert ctx.premarket_direction_forecast_task.task_name == "premarket_direction_forecast"
     # 적중률 추적 기록은 gitignore 대상인 data/ 아래에 남긴다
     assert str(ctx.premarket_direction_service._history_path).replace("\\", "/") == "data/premarket_direction/history.json"
@@ -1752,6 +1753,7 @@ def test_premarket_direction_forecast_wired_for_trading_and_service_for_web(patc
     web_ctx.runtime_mode = RuntimeMode.WEB
     ServiceContainer(web_ctx).run()
     assert web_ctx.premarket_direction_service is not None
+    assert web_ctx.premarket_direction_service._market_calendar_service is web_ctx._mcs
     assert web_ctx.premarket_direction_forecast_task is None
     assert web_ctx.premarket_direction_result_task is None   # 장마감 채점은 배치 모드 전용
     assert ctx.premarket_direction_result_task.task_name == "premarket_direction_result"

@@ -22,13 +22,14 @@ import math
 import re
 from bisect import bisect_left
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Union
 
 import httpx
 
 from services.notification_service import NotificationCategory, NotificationLevel
+from services.us_market_calendar_service import USMarketCalendarService
 
 
 @dataclass(frozen=True)
@@ -317,6 +318,7 @@ class PremarketDirectionService:
         history_count: int = 1500,
         min_train_days: int = 250,
         history_path: Union[str, Path, None] = None,
+        market_calendar_service=None,
     ):
         self._fetcher = fetcher
         self._clock = market_clock
@@ -324,6 +326,8 @@ class PremarketDirectionService:
         self._logger = logger or logging.getLogger(__name__)
         self._history_count = history_count
         self._min_train_days = min_train_days
+        self._market_calendar_service = market_calendar_service
+        self._us_calendar = USMarketCalendarService(market_clock=None)
         # None 이면 적중 기록을 남기지 않는다(테스트·스크립트용). 운영 조립은 경로를 넘긴다.
         self._history_path = Path(history_path) if history_path is not None else None
         self._latest: Optional[dict] = None
@@ -352,6 +356,7 @@ class PremarketDirectionService:
         return result
 
     async def _compute(self, today: str) -> dict:
+        expected_base_date = await self._previous_korean_trading_date(today)
         specs = list(dict.fromkeys(f for t in TARGETS for f in t.features))
         us = {f.name: await self._fetcher.fetch_us(f.symbol) for f in specs}
         empty = [f.name for f in specs if not us[f.name]]
@@ -366,11 +371,18 @@ class PremarketDirectionService:
                 raise ValueError(f"시세 수신 실패: {target.code}")
             if base_date is None:
                 base_date = kr[-1]["date"]
-                if not any(base_date <= row["date"] < today for row in us["spx"]):
+                if expected_base_date is not None and base_date != expected_base_date:
+                    raise ValueError(
+                        f"국내 직전 거래일 종가 미갱신: {base_date} != {expected_base_date}"
+                    )
+                expected_us_date = self._latest_us_session(base_date, today)
+                if expected_us_date is None:
                     return {
                         "ok": True, "date": today, "skipped": "no_new_us_session",
                         "message": "미국장 신규 종가가 없어 장전 예측을 보류합니다.", "targets": [],
                     }
+                if not any(row["date"] == expected_us_date for row in us["spx"]):
+                    raise ValueError(f"미국장 종가 미갱신: S&P500 {expected_us_date}")
             elif kr[-1]["date"] != base_date:
                 raise ValueError(
                     f"국내 종가 기준일 불일치: {target.code} {kr[-1]['date']} != {base_date}"
@@ -389,6 +401,26 @@ class PremarketDirectionService:
             "targets": targets,
             "features": [{"name": f.name, "label": f.label, "value": feats[f.name]} for f in specs],
         }
+
+    async def _previous_korean_trading_date(self, today: str) -> Optional[str]:
+        if self._market_calendar_service is None:
+            return None
+        day = date.fromisoformat(today) - timedelta(days=1)
+        for _ in range(14):
+            if await self._market_calendar_service.is_business_day(day.strftime("%Y%m%d")):
+                return day.isoformat()
+            day -= timedelta(days=1)
+        raise ValueError("국내 직전 거래일 확인 실패")
+
+    def _latest_us_session(self, base_date: str, today: str) -> Optional[str]:
+        day = date.fromisoformat(base_date)
+        end = date.fromisoformat(today)
+        latest = None
+        while day < end:
+            if self._us_calendar.is_trading_day(day.strftime("%Y%m%d")):
+                latest = day.isoformat()
+            day += timedelta(days=1)
+        return latest
 
     def _track(
         self,
