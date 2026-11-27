@@ -164,10 +164,59 @@ async def test_balance_query_failure_is_not_treated_as_drift():
     task, _, notif, _ = _task(drift=drift)
 
     await task._tick()
+    await task._tick()
 
+    assert task._last_checked_date is None
     assert task.get_progress()["last_result"]["error"] == "balance_query_failed"
+    assert task.get_progress()["last_result"]["attempts"] == 2
+    notif.emit.assert_not_awaited()
+
+    task._market_clock.get_current_kst_time.return_value = _at(10, 1)
+    await task._tick()
+    notif.emit.assert_awaited_once()
+    await task._tick()
+    notif.emit.assert_awaited_once()
     body = notif.emit.await_args.args[3]
+    assert "2회" in body
     assert "조회" in body or "실패" in body
+
+
+@pytest.mark.asyncio
+async def test_balance_query_recovers_on_next_poll():
+    failure = {"ok": False, "error": "balance_query_failed", "missing_in_broker": [],
+               "extra_in_broker": [], "qty_mismatch": []}
+    success = {"ok": True, "matched": [], "missing_in_broker": [],
+               "extra_in_broker": [], "qty_mismatch": []}
+    task, svc, notif, _ = _task()
+    svc.reconcile.side_effect = [failure, success]
+    await task._tick()
+    await task._tick()
+    assert task._last_checked_date == "20260818"
+    notif.emit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_non_retriable_balance_failure_alerts_immediately():
+    failure = {"ok": False, "error": "balance_query_failed", "missing_in_broker": [],
+               "extra_in_broker": [], "qty_mismatch": []}
+    task, _, notif, broker = _task(drift=failure, balance_ok=False)
+    broker.get_overseas_balance.return_value.msg1 = "API 오류: Business Error: 주문이 불가한 계좌입니다."
+    await task._tick()
+    await task._tick()
+    assert task._last_checked_date == "20260818"
+    notif.emit.assert_awaited_once()
+    assert "주문이 불가한 계좌" in notif.emit.await_args.args[3]
+
+
+@pytest.mark.asyncio
+async def test_actual_drift_emits_drift_alert():
+    drift = {"ok": False, "matched": [],
+             "missing_in_broker": [{"symbol": "AAA", "local_qty": 3}],
+             "extra_in_broker": [], "qty_mismatch": [], "broker_positions": {}}
+    task, _, notif, _ = _task(drift=drift)
+    await task._tick()
+    assert task._last_checked_date == "20260818"
+    assert notif.emit.await_args.args[2] == "미국장 개장 대사 불일치"
 
 
 @pytest.mark.asyncio

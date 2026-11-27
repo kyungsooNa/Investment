@@ -18,7 +18,7 @@ _NON_RETRIABLE_MSG_PATTERNS = [
 
 # KIS API msg1에 포함될 경우 일시적 과부하로 재시도 가능한 키워드
 _RETRIABLE_MSG_PATTERNS = [
-    "초당 거래건수", "분당 거래건수", "잠시 후", "서버 과부하",
+    "초당 거래건수", "분당 거래건수", "잠시 후", "잠시후 재시도", "서버 과부하",
     "too many", "rate limit", "요청이 많습니다",
 ]
 
