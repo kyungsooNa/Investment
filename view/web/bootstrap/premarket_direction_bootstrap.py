@@ -12,6 +12,7 @@ def build_premarket_direction(ctx, *, needs_trading: bool, needs_batch: bool) ->
         fetcher=DailyHistoryFetcher(),
         history_path="data/premarket_direction/history.json",
         market_clock=ctx.market_clock,
+        market_calendar_service=ctx._mcs,
         notification_service=ctx.notification_service,
         logger=ctx.logger,
     )
