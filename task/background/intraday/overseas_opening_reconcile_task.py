@@ -14,6 +14,7 @@ import asyncio
 import logging
 from typing import Any, Dict, List, Optional
 
+from core.retry_queue.retry_classifier import RequestOutcome, classify
 from interfaces.schedulable_task import SchedulableTask, TaskPriority, TaskState
 from services.notification_service import NotificationCategory, NotificationLevel
 
@@ -120,17 +121,24 @@ class OverseasOpeningReconcileTask(SchedulableTask):
         if self._us_mcs is not None and not self._us_mcs.is_trading_day(today):
             return
         if not self._in_window(now):
+            if (self._last_result.get("trade_date") == today
+                    and self._last_result.get("error") == "balance_query_failed"
+                    and (now - self._market_clock.get_market_open_time(now)).total_seconds()
+                    > self._run_window_min * 60):
+                await self._alert_failure()
+                self._last_checked_date = today
             return
 
         try:
-            await self._reconcile(today)
+            completed = await self._reconcile(today)
         except Exception as exc:
             # 날짜를 마킹하지 않는다 — 다음 폴링에서 재시도돼야 한다.
             self._last_result = {"error": str(exc)}
             self._logger.error({"event": "overseas_opening_reconcile_error",
                                 "trade_date": today, "error": str(exc)}, exc_info=True)
             return
-        self._last_checked_date = today
+        if completed:
+            self._last_checked_date = today
 
     def _in_window(self, now) -> bool:
         """개장 + delay ~ + window 사이. 개장 직후엔 체결 반영이 덜 돼 오탐이 난다."""
@@ -138,7 +146,7 @@ class OverseasOpeningReconcileTask(SchedulableTask):
         elapsed_min = (now - open_dt).total_seconds() / 60.0
         return self._open_delay_min <= elapsed_min <= self._run_window_min
 
-    async def _reconcile(self, trade_date: str) -> None:
+    async def _reconcile(self, trade_date: str) -> bool:
         local = self._local_positions()
         balance = await self._broker.get_overseas_balance()
         report = self._service.reconcile(local, balance)
@@ -148,31 +156,45 @@ class OverseasOpeningReconcileTask(SchedulableTask):
             + list(report.get("extra_in_broker") or [])
             + list(report.get("qty_mismatch") or [])
         )
+        previous_result = self._last_result
         self._last_result = {
             "trade_date": trade_date,
             "local_positions": local,
             "drift_count": len(drift_items),
             "error": report.get("error"),
         }
+        if report.get("error") == "balance_query_failed":
+            self._last_result["attempts"] = (
+                previous_result.get("attempts", 0) + 1
+                if previous_result.get("trade_date") == trade_date else 1
+            )
+            self._last_result["broker_message"] = getattr(balance, "msg1", "") or "응답 없음"
+            if classify(balance) == RequestOutcome.FAIL:
+                await self._alert_failure()
+                return True
+            return False
         self._logger.info({"event": "overseas_opening_reconcile_done",
                            "trade_date": trade_date, "local": local,
                            "drift_count": len(drift_items), "error": report.get("error")})
 
-        if not report.get("ok"):
-            await self._alert(
-                "미국장 개장 대사 실패",
-                f"브로커 잔고 조회에 실패해 대사하지 못했습니다 "
-                f"(사유: {report.get('error') or '알 수 없음'}).\n"
-                f"조회 불가는 미보유와 다르므로 drift 로 처리하지 않았습니다.",
-                NotificationLevel.WARNING,
-            )
-            return
         if drift_items:
             await self._alert(
                 "미국장 개장 대사 불일치",
                 self._format_drift(report),
                 NotificationLevel.WARNING,
             )
+        return True
+
+    async def _alert_failure(self) -> None:
+        result = self._last_result
+        await self._alert(
+            "미국장 개장 대사 실패",
+            f"브로커 잔고 조회에 실패해 대사하지 못했습니다 "
+            f"(대사 시도 {result.get('attempts', 0)}회, "
+            f"브로커 응답: {result.get('broker_message') or '응답 없음'}).\n"
+            "조회 불가는 미보유와 다르므로 drift 로 처리하지 않았습니다.",
+            NotificationLevel.WARNING,
+        )
 
     def _local_positions(self) -> Dict[str, int]:
         """전략별 보유를 심볼 기준으로 합산한다.

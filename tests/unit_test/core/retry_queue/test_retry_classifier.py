@@ -102,6 +102,13 @@ class TestClassifyByMsgKeyword:
         assert classify(result) == RequestOutcome.FAIL
         assert is_non_retriable_business_error(result) is True
 
+    def test_paper_service_delay_returns_retry(self):
+        result = resp(
+            ErrorCode.API_ERROR.value,
+            "API 오류: Business Error: 모의투자 서비스가 지연되고 있습니다. 잠시후 재시도 바랍니다.",
+        )
+        assert classify(result) == RequestOutcome.RETRY
+
 
 class TestClassifyUnknownErrorCode:
     """우리 ErrorCode enum에 없는 KIS 내부 코드 처리"""
