@@ -338,6 +338,8 @@ class PremarketDirectionService:
     async def get_or_compute(self) -> dict:
         """오늘 성공 결과가 없으면 알림 없이 계산한다 (장전 태스크를 놓친 날의 웹 조회용)."""
         today = self._clock.get_current_kst_time().strftime("%Y-%m-%d")
+        if not await self._is_korean_business_day(today):
+            return self._closed_day_result(today)
         latest = self._latest
         if latest is not None and latest.get("date") == today and latest.get("ok"):
             return self._latest
@@ -346,7 +348,8 @@ class PremarketDirectionService:
     async def refresh(self, notify: bool = True) -> dict:
         today = self._clock.get_current_kst_time().strftime("%Y-%m-%d")
         try:
-            result = await self._compute(today)
+            result = (await self._compute(today) if await self._is_korean_business_day(today)
+                      else self._closed_day_result(today))
         except Exception as exc:
             result = {"ok": False, "date": today, "error": _describe_error(exc)}
             self._logger.warning("장전 양음봉·종가 방향 예측 실패: %s", result["error"])
@@ -354,6 +357,16 @@ class PremarketDirectionService:
         if notify and result["ok"] and not result.get("skipped") and self._notification_service is not None:
             await self._notify(result)
         return result
+
+    async def _is_korean_business_day(self, today: str) -> bool:
+        if self._market_calendar_service is not None:
+            return await self._market_calendar_service.is_business_day(today.replace("-", ""))
+        return date.fromisoformat(today).weekday() < 5
+
+    @staticmethod
+    def _closed_day_result(today: str) -> dict:
+        return {"ok": True, "date": today, "skipped": "non_business_day",
+                "message": "국내 휴장일에는 예측하지 않습니다.", "targets": []}
 
     async def _compute(self, today: str) -> dict:
         expected_base_date = await self._previous_korean_trading_date(today)

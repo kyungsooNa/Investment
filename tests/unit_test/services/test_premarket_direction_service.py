@@ -207,13 +207,34 @@ async def test_missing_us_close_on_trading_day_is_retryable():
 
 
 @pytest.mark.asyncio
+async def test_weekend_web_lookup_skips_without_fetch_or_history(tmp_path):
+    fetcher = FakeFetcher(today="2026-11-28", end=date(2026, 11, 27))
+    calendar = MagicMock()
+    calendar.is_business_day = AsyncMock(return_value=False)
+    history_path = tmp_path / "history.json"
+    svc = _service(
+        fetcher, clock=_clock(datetime(2026, 11, 28, 9, 0)),
+        history_path=history_path, market_calendar_service=calendar,
+    )
+
+    result = await svc.get_or_compute()
+
+    assert result == {"ok": True, "date": "2026-11-28", "skipped": "non_business_day",
+                      "message": "국내 휴장일에는 예측하지 않습니다.", "targets": []}
+    calendar.is_business_day.assert_awaited_with("20261128")
+    fetcher.fetch_us.assert_not_awaited()
+    fetcher.fetch_kr_index.assert_not_awaited()
+    assert not history_path.exists()
+
+
+@pytest.mark.asyncio
 async def test_refresh_rejects_all_targets_stale_against_korean_calendar():
     fetcher = FakeFetcher()
     fetcher.fetch_kr_index = AsyncMock(
         return_value=[r for r in fetcher.kr if r["date"] < "2026-11-18"]
     )
     calendar = MagicMock()
-    calendar.is_business_day = AsyncMock(side_effect=lambda day: day == "20261118")
+    calendar.is_business_day = AsyncMock(side_effect=lambda day: day in {"20261118", "20261119"})
 
     result = await _service(fetcher, market_calendar_service=calendar).refresh(notify=False)
 
